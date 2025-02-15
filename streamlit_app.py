@@ -50,8 +50,7 @@ def calculate_box_surface_area(width_cm: float, height_cm: float) -> float:
     sides_area = 6 * side_length * height_m
     return (2 * hexagon_area) + sides_area
 
-def calculate_relative_humidity_at_altitude(base_humidity: float, base_temp: float, 
-                                            altitude: float) -> float:
+def calculate_relative_humidity_at_altitude(base_humidity: float, base_temp: float, altitude: float) -> float:
     """
     Calculate relative humidity at altitude based on temperature and pressure changes.
     Uses the Magnus-Tetens formula for vapor pressure.
@@ -82,9 +81,9 @@ def adjust_temperature_for_conditions(base_temp: float, altitude: float, is_dayt
                                       apply_altitude_temp_correction: bool = True,
                                       debug: bool = False) -> float:
     """
-    Adjust temperature based on environmental conditions including altitude, humidity, rain, and wind.
+    Adjust temperature based on environmental conditions.
     
-    If apply_altitude_temp_correction is True, the function subtracts an altitude-dependent lapse rate.
+    If apply_altitude_temp_correction is True, subtract an altitude-dependent lapse rate.
     Otherwise, the base temperature remains unchanged.
     """
     if debug:
@@ -97,7 +96,7 @@ def adjust_temperature_for_conditions(base_temp: float, altitude: float, is_dayt
     if apply_altitude_temp_correction:
         altitude_adjusted_temp = base_temp - (altitude * LAPSE_RATE / 1000)
     else:
-        altitude_adjusted_temp = base_temp  # Do not adjust ambient temperature
+        altitude_adjusted_temp = base_temp  # Use the GPS temperature as is
     
     DAY_NIGHT_DIFFERENCE = 8.0  # °C difference between day and night
     time_adjusted_temp = altitude_adjusted_temp + (DAY_NIGHT_DIFFERENCE / 2 if is_daytime else -DAY_NIGHT_DIFFERENCE / 2)
@@ -107,7 +106,7 @@ def adjust_temperature_for_conditions(base_temp: float, altitude: float, is_dayt
     else:
         humidity_adjustment = 0
     
-    RAIN_COOLING_EFFECT = 5.0  # Maximum temperature reduction from heavy rain
+    RAIN_COOLING_EFFECT = 5.0  # Maximum cooling effect of heavy rain
     rain_adjustment = -RAIN_COOLING_EFFECT * rain_intensity * (1 - altitude_humidity / 200)
     
     if time_adjusted_temp <= 10 and wind_speed > 1.3:
@@ -122,114 +121,133 @@ def adjust_temperature_for_conditions(base_temp: float, altitude: float, is_dayt
         st.write(f"[DEBUG] Final adjusted temp: {final_temp}")
     return final_temp
 
-def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box], 
-                               ambient_temp_c: float, is_daytime: bool, 
+def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
+                               ambient_temp_c: float, is_daytime: bool,
                                altitude: float, rain_intensity: float = 0.0,
                                wind_speed: float = 0.0, humidity: float = 50.0,
                                apply_altitude_temp_correction: bool = True,
                                debug: bool = False) -> Dict[str, Any]:
     """
     Calculate hive temperature taking into account environmental factors and hive configuration.
-    The ambient temperature is adjusted based on the toggle for altitude correction.
-    Altitude is still used for oxygen factor and humidity calculations.
+    If the "bypass" option is active, the hive base temperature is set equal to the GPS ambient temperature.
     """
     if debug:
         st.write("[DEBUG] Input params:", params)
         st.write(f"[DEBUG] Ambient temp: {ambient_temp_c}, Daytime: {is_daytime}, Altitude: {altitude}")
     
+    # Use altitude for oxygen factor and humidity calculations even if we bypass temperature adjustment.
     oxygen_factor = calculate_oxygen_factor(altitude)
     
-    adjusted_ambient_temp = adjust_temperature_for_conditions(
-        ambient_temp_c, altitude, is_daytime, rain_intensity, wind_speed, humidity,
-        apply_altitude_temp_correction=apply_altitude_temp_correction, debug=debug
-    )
+    # Check if we are bypassing hive adjustments
+    if params.get("bypass_hive", False):
+        # When bypassing, we use the ambient temperature directly.
+        adjusted_ambient_temp = ambient_temp_c
+    else:
+        adjusted_ambient_temp = adjust_temperature_for_conditions(
+            ambient_temp_c, altitude, is_daytime, rain_intensity, wind_speed, humidity,
+            apply_altitude_temp_correction=apply_altitude_temp_correction, debug=debug
+        )
+    
     if debug:
         st.write(f"[DEBUG] Adjusted ambient temp: {adjusted_ambient_temp}")
     
     altitude_humidity = calculate_relative_humidity_at_altitude(humidity, ambient_temp_c, altitude)
     
-    # Adjust parameters based on time of day
-    if is_daytime:
-        params['ideal_hive_temperature'] += 1.0
-        params['bee_metabolic_heat'] *= 1.2
-        params['air_film_resistance_outside'] *= 0.9
-    else:
-        params['ideal_hive_temperature'] -= 0.5
-        params['bee_metabolic_heat'] *= 0.8
-        params['air_film_resistance_outside'] *= 1.2
-    
+    # Adjust simulation parameters based on time of day
+    if not params.get("bypass_hive", False):
+        if is_daytime:
+            params['ideal_hive_temperature'] += 1.0
+            params['bee_metabolic_heat'] *= 1.2
+            params['air_film_resistance_outside'] *= 0.9
+        else:
+            params['ideal_hive_temperature'] -= 0.5
+            params['bee_metabolic_heat'] *= 0.8
+            params['air_film_resistance_outside'] *= 1.2
+
     if debug:
         st.write("[DEBUG] Time-adjusted params:", params)
     
-    # High humidity adjustments
-    if altitude_humidity > 70:
-        evaporative_cooling_factor = 1 - ((altitude_humidity - 70) / 100)
-        params['bee_metabolic_heat'] *= (1 + (1 - evaporative_cooling_factor) * 0.2)
-    
-    # Rain adjustments
-    if rain_intensity > 0:
-        params['bee_metabolic_heat'] *= (1 + rain_intensity * 0.3)
-        params['air_film_resistance_outside'] *= (1 - rain_intensity * 0.2)
-    
-    # Wind adjustments
-    if wind_speed > 0:
-        wind_factor = max(0.5, 1 - (wind_speed / 20))
-        params['air_film_resistance_outside'] *= wind_factor
-        params['bee_metabolic_heat'] *= (1 + (wind_speed / 20) * 0.4)
-    
-    calculated_colony_size = 50000 * (params['colony_size'] / 100)
-    colony_metabolic_heat = calculated_colony_size * params['bee_metabolic_heat'] * oxygen_factor
-    if debug:
-        st.write(f"[DEBUG] Calculated colony size: {calculated_colony_size}, Metabolic heat: {colony_metabolic_heat}")
-    
-    total_volume = sum(
-        (3 * math.sqrt(3) / 2) * ((box.width / (100 * math.sqrt(3))) ** 2) * (box.height / 100)
-        for box in boxes
-    )
-    total_surface_area = sum(calculate_box_surface_area(box.width, box.height) for box in boxes)
-    if debug:
-        st.write(f"[DEBUG] Total volume: {total_volume}, Total surface area: {total_surface_area}")
-    
-    wood_resistance = (params['wood_thickness'] / 100) / params['wood_thermal_conductivity']
-    total_resistance = wood_resistance + params['air_film_resistance_outside']
-    if debug:
-        st.write(f"[DEBUG] Wood resistance: {wood_resistance}, Total resistance: {total_resistance}")
-    
-    if adjusted_ambient_temp >= params['ideal_hive_temperature']:
-        cooling_effort = min(1.0, (adjusted_ambient_temp - params['ideal_hive_temperature']) / 10)
-        temp_decrease = (2.0 if is_daytime else 1.0) * cooling_effort
-        estimated_temp_c = max(params['ideal_hive_temperature'], adjusted_ambient_temp - temp_decrease)
+    # When bypassing, skip the metabolic heat and cooling/heating calculations.
+    if params.get("bypass_hive", False):
+        estimated_temp_c = ambient_temp_c
     else:
-        heat_contribution = min(
-            params['ideal_hive_temperature'] - adjusted_ambient_temp,
-            (colony_metabolic_heat * total_resistance) / total_surface_area
-        )
-        heat_contribution *= 0.9 if not is_daytime else 1.0
-        estimated_temp_c = adjusted_ambient_temp + heat_contribution
+        # Adjust for high humidity, rain, and wind effects
+        if altitude_humidity > 70:
+            evaporative_cooling_factor = 1 - ((altitude_humidity - 70) / 100)
+            params['bee_metabolic_heat'] *= (1 + (1 - evaporative_cooling_factor) * 0.2)
     
-    estimated_temp_c = min(50, max(0, estimated_temp_c))
+        if rain_intensity > 0:
+            params['bee_metabolic_heat'] *= (1 + rain_intensity * 0.3)
+            params['air_film_resistance_outside'] *= (1 - rain_intensity * 0.2)
+    
+        if wind_speed > 0:
+            wind_factor = max(0.5, 1 - (wind_speed / 20))
+            params['air_film_resistance_outside'] *= wind_factor
+            params['bee_metabolic_heat'] *= (1 + (wind_speed / 20) * 0.4)
+    
+        calculated_colony_size = 50000 * (params['colony_size'] / 100)
+        colony_metabolic_heat = calculated_colony_size * params['bee_metabolic_heat'] * oxygen_factor
+    
+        if debug:
+            st.write(f"[DEBUG] Calculated colony size: {calculated_colony_size}, Metabolic heat: {colony_metabolic_heat}")
+    
+        total_volume = sum(
+            (3 * math.sqrt(3) / 2) * ((box.width / (100 * math.sqrt(3))) ** 2) * (box.height / 100)
+            for box in boxes
+        )
+        total_surface_area = sum(calculate_box_surface_area(box.width, box.height) for box in boxes)
+    
+        if debug:
+            st.write(f"[DEBUG] Total volume: {total_volume}, Total surface area: {total_surface_area}")
+    
+        wood_resistance = (params['wood_thickness'] / 100) / params['wood_thermal_conductivity']
+        total_resistance = wood_resistance + params['air_film_resistance_outside']
+    
+        if debug:
+            st.write(f"[DEBUG] Wood resistance: {wood_resistance}, Total resistance: {total_resistance}")
+    
+        if adjusted_ambient_temp >= params['ideal_hive_temperature']:
+            cooling_effort = min(1.0, (adjusted_ambient_temp - params['ideal_hive_temperature']) / 10)
+            temp_decrease = (2.0 if is_daytime else 1.0) * cooling_effort
+            estimated_temp_c = max(params['ideal_hive_temperature'], adjusted_ambient_temp - temp_decrease)
+        else:
+            heat_contribution = min(
+                params['ideal_hive_temperature'] - adjusted_ambient_temp,
+                (colony_metabolic_heat * total_resistance) / total_surface_area
+            )
+            heat_contribution *= 0.9 if not is_daytime else 1.0
+            estimated_temp_c = adjusted_ambient_temp + heat_contribution
+    
+        estimated_temp_c = min(50, max(0, estimated_temp_c))
+    
     if debug:
         st.write(f"[DEBUG] Estimated hive base temperature: {estimated_temp_c}")
     
-    box_temperatures = [
-        max(0, min(50, estimated_temp_c - box.cooling_effect))
-        for box in boxes
-    ]
+    # Determine box temperatures (each box cools the base temperature by its own factor)
+    if params.get("bypass_hive", False):
+        box_temperatures = [ambient_temp_c for _ in boxes]
+    else:
+        box_temperatures = [
+            max(0, min(50, estimated_temp_c - box.cooling_effect))
+            for box in boxes
+        ]
+    
     if debug:
         st.write("[DEBUG] Box temperatures:", box_temperatures)
     
-    heat_transfer = (total_surface_area * abs(estimated_temp_c - adjusted_ambient_temp)) / total_resistance / 1000
+    heat_transfer = (total_surface_area * abs(estimated_temp_c - adjusted_ambient_temp)) / total_resistance / 1000 if not params.get("bypass_hive", False) else 0
+    
     if debug:
         st.write(f"[DEBUG] Heat transfer (kW): {heat_transfer}")
     
     return {
-        'calculated_colony_size': calculated_colony_size,
-        'colony_metabolic_heat': colony_metabolic_heat / 1000,  # kW
+        'calculated_colony_size': calculated_colony_size if not params.get("bypass_hive", False) else 0,
+        'colony_metabolic_heat': (colony_metabolic_heat / 1000) if not params.get("bypass_hive", False) else 0,
         'base_temperature': estimated_temp_c,
         'box_temperatures': box_temperatures,
-        'total_volume': total_volume,
-        'total_surface_area': total_surface_area,
-        'thermal_resistance': total_resistance,
+        'total_volume': total_volume if not params.get("bypass_hive", False) else 0,
+        'total_surface_area': total_surface_area if not params.get("bypass_hive", False) else 0,
+        'thermal_resistance': total_resistance if not params.get("bypass_hive", False) else 0,
         'ambient_temperature': adjusted_ambient_temp,
         'oxygen_factor': oxygen_factor,
         'altitude_humidity': altitude_humidity,
@@ -318,12 +336,17 @@ def render_sidebar() -> Dict[str, Any]:
     
     st.sidebar.write("Current params:", params)
     
-    # Toggle to control whether to apply additional altitude correction to the ambient temperature.
     apply_altitude_correction = st.sidebar.checkbox(
         "Apply altitude correction to ambient temp", value=True,
         help="Disable if GPS temperature is already altitude-adjusted."
     )
     params['apply_altitude_correction'] = apply_altitude_correction
+    
+    bypass_hive = st.sidebar.checkbox(
+        "Bypass hive calculation adjustments", value=False,
+        help="If enabled, hive temperature will be set equal to the GPS ambient temperature."
+    )
+    params['bypass_hive'] = bypass_hive
     
     return params, debug
 
@@ -376,7 +399,6 @@ def main():
         
         st.subheader("🌍 Environmental Conditions")
         is_daytime = st.radio("Time of Day", ['Day', 'Night'], index=0) == 'Day'
-        # Always use the slider value for altitude (used for oxygen factor, humidity, etc.)
         altitude = st.slider("Simulated Altitude (meters)", 0, 3800, 0, 100)
         
         col1a, col1b, col1c = st.columns(3)
