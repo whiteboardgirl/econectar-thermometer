@@ -126,6 +126,26 @@ def adjust_temperature_for_conditions(
         st.write(f"[DEBUG] Final adjusted temp: {final_temp}")
     return final_temp
 
+gps_coordinates = st.text_input("Enter GPS Coordinates (lat, lon)", "4.6097, -74.0817")
+try:
+    lat, lon = map(float, gps_coordinates.split(','))
+    ambient_temperature = get_temperature_from_coordinates(lat, lon)
+    if ambient_temperature is None:
+        ambient_temperature = 25.0
+    
+    # Try to get the altitude automatically:
+    altitude = get_altitude_from_coordinates(lat, lon)
+    if altitude is None:
+        st.warning("Could not retrieve altitude automatically. Please use the slider below.")
+        altitude = st.slider("Simulated Altitude (meters)", 0, 3800, 0, 100)
+    else:
+        st.info(f"Retrieved altitude: {altitude:.1f} m")
+except ValueError:
+    st.error("Please enter valid coordinates in the format 'lat, lon'")
+    ambient_temperature = 25.0
+    altitude = st.slider("Simulated Altitude (meters)", 0, 3800, 0, 100)
+
+
 def calculate_hive_temperature(
     params: Dict[str, float],
     boxes: List[Box],
