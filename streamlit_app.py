@@ -1,4 +1,3 @@
-# streamlit_app.py
 import streamlit as st
 import numpy as np
 import math
@@ -9,7 +8,6 @@ import requests
 from dataclasses import dataclass
 from typing import Dict, List, Any, Optional
 
-# Configuration
 @dataclass
 class ThermalConfig:
     """Configuration constants for thermal calculations."""
@@ -43,77 +41,59 @@ def calculate_box_surface_area(width_cm: float, height_cm: float) -> float:
     return (2 * hexagon_area) + sides_area
 
 def calculate_relative_humidity_at_altitude(base_humidity: float, base_temp: float, 
-                                      altitude: float) -> float:
+                                            altitude: float) -> float:
     """
     Calculate relative humidity at altitude based on temperature and pressure changes.
     
     The Magnus-Tetens formula is used for vapor pressure calculations.
     Humidity typically increases with altitude until about 2000m, then decreases.
     """
-    # Constants for Magnus-Tetens formula
     A = 17.27
     B = 237.7  # °C
     
-    # Calculate temperature at altitude
     LAPSE_RATE = 6.5  # °C per 1000m
     temp_at_altitude = base_temp - (altitude * LAPSE_RATE / 1000)
     
-    # Calculate saturation vapor pressure at both levels
     def vapor_pressure(T):
         return 0.611 * math.exp((A * T) / (T + B))  # kPa
     
     base_es = vapor_pressure(base_temp)
     altitude_es = vapor_pressure(temp_at_altitude)
     
-    # Pressure ratio with altitude
     pressure_ratio = math.exp(-altitude / 7400)  # scale height of 7400m
     
-    # Calculate actual vapor pressure at altitude
     base_ea = base_es * (base_humidity / 100)
     altitude_ea = base_ea * pressure_ratio
     
-    # Calculate new relative humidity
     new_rh = (altitude_ea / altitude_es) * 100
     
-    # Modify for typical humidity profile with altitude
     altitude_factor = min(1.2, 1 + (altitude / 2000) * 0.2) if altitude <= 2000 else \
                      1.2 * (1 - (altitude - 2000) / 6000 * 0.3)
     
     return min(100, max(0, new_rh * altitude_factor))
 
 def adjust_temperature_for_conditions(base_temp: float, altitude: float, is_daytime: bool,
-                                   rain_intensity: float = 0.0, wind_speed: float = 0.0,
-                                   humidity: float = 50.0) -> float:
+                                      rain_intensity: float = 0.0, wind_speed: float = 0.0,
+                                      humidity: float = 50.0) -> float:
     """
     Adjust temperature based on environmental conditions including humidity.
     """
-    # Calculate humidity at altitude
     altitude_humidity = calculate_relative_humidity_at_altitude(humidity, base_temp, altitude)
     
-    # Altitude adjustment using environmental lapse rate
     LAPSE_RATE = 6.5  # °C per 1000m
     altitude_adjusted_temp = base_temp - (altitude * LAPSE_RATE / 1000)
     
-    # Day/night adjustment
     DAY_NIGHT_DIFFERENCE = 8.0  # °C difference between day and night
-    if is_daytime:
-        time_adjusted_temp = altitude_adjusted_temp + (DAY_NIGHT_DIFFERENCE / 2)
-    else:
-        time_adjusted_temp = altitude_adjusted_temp - (DAY_NIGHT_DIFFERENCE / 2)
+    time_adjusted_temp = altitude_adjusted_temp + (DAY_NIGHT_DIFFERENCE / 2 if is_daytime else -DAY_NIGHT_DIFFERENCE / 2)
     
-    # Humidity effect on perceived temperature (heat index simplified)
     if time_adjusted_temp > 25 and altitude_humidity > 40:
-        # Simple heat index approximation
         humidity_adjustment = (altitude_humidity - 40) / 100 * (time_adjusted_temp - 25) * 0.5
     else:
         humidity_adjustment = 0
     
-    # Rain effect: reduces temperature
     RAIN_COOLING_EFFECT = 5.0  # Maximum temperature reduction from heavy rain
-    # Reduce rain cooling effect in high humidity
     rain_adjustment = -RAIN_COOLING_EFFECT * rain_intensity * (1 - altitude_humidity / 200)
     
-    # Wind chill effect using simplified wind chill formula
     if time_adjusted_temp <= 10 and wind_speed > 1.3:
         wind_chill = 13.12 + 0.6215 * time_adjusted_temp - 11.37 * (wind_speed ** 0.16) + \
                     0.3965 * time_adjusted_temp * (wind_speed ** 0.16)
@@ -125,20 +105,18 @@ def adjust_temperature_for_conditions(base_temp: float, altitude: float, is_dayt
     return final_temp
 
 def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box], 
-                             ambient_temp_c: float, is_daytime: bool, 
-                             altitude: float, rain_intensity: float = 0.0,
-                             wind_speed: float = 0.0, humidity: float = 50.0) -> Dict[str, Any]:
+                               ambient_temp_c: float, is_daytime: bool, 
+                               altitude: float, rain_intensity: float = 0.0,
+                               wind_speed: float = 0.0, humidity: float = 50.0) -> Dict[str, Any]:
     """Calculate hive temperature with all environmental factors."""
-    # Get oxygen factor for altitude
+    config = ThermalConfig()
     oxygen_factor = calculate_oxygen_factor(altitude)
     
-    # Calculate humidity at altitude
-    altitude_humidity = calculate_relative_humidity_at_altitude(humidity, ambient_temp_c, altitude)
-    
-    # Adjust ambient temperature for conditions
     adjusted_ambient_temp = adjust_temperature_for_conditions(
         ambient_temp_c, altitude, is_daytime, rain_intensity, wind_speed, humidity
     )
+    
+    altitude_humidity = calculate_relative_humidity_at_altitude(humidity, ambient_temp_c, altitude)
     
     # Adjust parameters for time of day
     if is_daytime:
@@ -152,7 +130,6 @@ def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
     
     # Humidity effects on bee thermoregulation
     if altitude_humidity > 70:
-        # High humidity makes it harder for bees to cool through evaporation
         evaporative_cooling_factor = 1 - ((altitude_humidity - 70) / 100)
         params['bee_metabolic_heat'] *= (1 + (1 - evaporative_cooling_factor) * 0.2)
     
@@ -167,11 +144,11 @@ def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
         params['air_film_resistance_outside'] *= wind_factor
         params['bee_metabolic_heat'] *= (1 + (wind_speed / 20) * 0.4)
     
-    # Calculate colony metrics
+    # Colony calculations
     calculated_colony_size = 50000 * (params['colony_size'] / 100)
     colony_metabolic_heat = calculated_colony_size * params['bee_metabolic_heat'] * oxygen_factor
 
-    # Calculate volumes and surface areas
+    # Volume and surface calculations
     total_volume = sum(
         (3 * math.sqrt(3) / 2) * ((box.width / (100 * math.sqrt(3))) ** 2) * (box.height / 100)
         for box in boxes
@@ -179,7 +156,7 @@ def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
     
     total_surface_area = sum(calculate_box_surface_area(box.width, box.height) for box in boxes)
 
-    # Thermal resistance calculations
+    # Thermal resistance
     wood_resistance = (params['wood_thickness'] / 100) / params['wood_thermal_conductivity']
     total_resistance = wood_resistance + params['air_film_resistance_outside']
 
@@ -219,91 +196,40 @@ def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
         'heat_transfer': (total_surface_area * abs(estimated_temp_c - adjusted_ambient_temp)) / total_resistance / 1000
     }
 
-    # Colony calculations
-    calculated_colony_size = 50000 * (params['colony_size'] / 100)
-    colony_metabolic_heat = calculated_colony_size * params['bee_metabolic_heat'] * oxygen_factor
-
-    # Volume and surface calculations
-    total_volume = sum(
-        (3 * math.sqrt(3) / 2) * ((box.width / (100 * math.sqrt(3))) ** 2) * (box.height / 100)
-        for box in boxes
-    )
-    
-    total_surface_area = sum(calculate_box_surface_area(box.width, box.height) for box in boxes)
-
-    # Thermal resistance
-    wood_resistance = (params['wood_thickness'] / 100) / params['wood_thermal_conductivity']
-    total_resistance = wood_resistance + params['air_film_resistance_outside']
-
-    # Temperature calculations
-    if ambient_temp_c >= params['ideal_hive_temperature']:
-        cooling_effort = min(1.0, (ambient_temp_c - params['ideal_hive_temperature']) / 10)
-        temp_decrease = 2.0 * cooling_effort if is_daytime else 1.0 * cooling_effort
-        estimated_temp_c = max(params['ideal_hive_temperature'], ambient_temp_c - temp_decrease)
-    else:
-        heat_contribution = min(
-            params['ideal_hive_temperature'] - ambient_temp_c,
-            (colony_metabolic_heat * total_resistance) / total_surface_area
-        )
-        heat_contribution *= 0.9 if not is_daytime else 1.0
-        estimated_temp_c = ambient_temp_c + heat_contribution
-
-    # Final adjustments
-    estimated_temp_c -= (altitude / 1000) * 0.5
-    estimated_temp_c = min(50, max(0, estimated_temp_c))
-
-    # Calculate box temperatures
-    box_temperatures = [
-        max(0, min(50, estimated_temp_c - box.cooling_effect))
-        for box in boxes
-    ]
-
-    return {
-        'calculated_colony_size': calculated_colony_size,
-        'colony_metabolic_heat': colony_metabolic_heat / 1000,  # Convert to kW
-        'base_temperature': estimated_temp_c,
-        'box_temperatures': box_temperatures,
-        'total_volume': total_volume,
-        'total_surface_area': total_surface_area,
-        'thermal_resistance': total_resistance,
-        'ambient_temperature': ambient_temp_c,
-        'oxygen_factor': oxygen_factor,
-        'heat_transfer': (total_surface_area * abs(estimated_temp_c - ambient_temp_c)) / total_resistance / 1000
-    }
-
 # Weather API integration
 def get_temperature_from_coordinates(lat: float, lon: float) -> Optional[float]:
     """Retrieve temperature data from coordinates."""
-    url = f'https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true'
+    url = f'https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}¤t_weather=true'
     try:
         response = requests.get(url)
         response.raise_for_status()
         data = response.json()
         return data['current_weather']['temperature']
+    except requests.HTTPError as e:
+        st.error(f"Error fetching weather data: {str(e)}. Status code: {e.response.status_code}")
+        return None
     except Exception as e:
-        st.error(f"Error fetching weather data: {str(e)}")
+        st.error(f"An unexpected error occurred while fetching weather data: {str(e)}")
         return None
 
 # Visualization functions
 def create_temperature_chart(box_temperatures: List[float]) -> None:
     """Create temperature distribution chart."""
-    fig = plt.figure(figsize=(10, 6))
-    plt.bar([f'Box {i+1}' for i in range(len(box_temperatures))], box_temperatures)
-    plt.ylabel('Temperature (°C)')
-    plt.title('Temperature Distribution Across Hive Boxes')
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.bar([f'Box {i+1}' for i in range(len(box_temperatures))], box_temperatures)
+    ax.set_ylabel('Temperature (°C)')
+    ax.set_title('Temperature Distribution Across Hive Boxes')
     st.pyplot(fig)
-    plt.close(fig)
 
 def create_altitude_chart(altitude_range: np.ndarray, temperatures: List[float]) -> None:
     """Create altitude effect visualization."""
-    fig = plt.figure(figsize=(10, 6))
-    plt.plot(altitude_range, temperatures)
-    plt.title("Hive Temperature vs. Altitude")
-    plt.xlabel("Altitude (m)")
-    plt.ylabel("Hive Temperature (°C)")
-    plt.grid(True)
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.plot(altitude_range, temperatures)
+    ax.set_title("Hive Temperature vs. Altitude")
+    ax.set_xlabel("Altitude (m)")
+    ax.set_ylabel("Hive Temperature (°C)")
+    ax.grid(True)
     st.pyplot(fig)
-    plt.close(fig)
 
 # State initialization
 def initialize_state() -> None:
@@ -397,7 +323,6 @@ def main():
         with col1a:
             humidity = st.slider("Relative Humidity (%)", 0, 100, 50,
                                help="Base humidity at current location")
-            # Calculate and display humidity at altitude
             altitude_humidity = calculate_relative_humidity_at_altitude(
                 humidity, ambient_temperature, altitude
             )
