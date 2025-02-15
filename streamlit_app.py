@@ -42,10 +42,18 @@ def calculate_box_surface_area(width_cm: float, height_cm: float) -> float:
     sides_area = 6 * side_length * height_m
     return (2 * hexagon_area) + sides_area
 
+def adjust_temperature_for_altitude(base_temp: float, altitude: float) -> float:
+    """Adjust temperature based on altitude using environmental lapse rate."""
+    LAPSE_RATE = 6.5  # °C per 1000m
+    return base_temp - (altitude * LAPSE_RATE / 1000)
+
 def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box], 
                              ambient_temp_c: float, is_daytime: bool, 
                              altitude: float) -> Dict[str, Any]:
     """Calculate hive temperature with environmental factors."""
+    # Adjust ambient temperature for altitude
+    adjusted_ambient_temp = adjust_temperature_for_altitude(ambient_temp_c, altitude)
+    
     # Adjust parameters for time of day
     if is_daytime:
         params['ideal_hive_temperature'] += 1.0
@@ -58,7 +66,7 @@ def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
     oxygen_factor = calculate_oxygen_factor(altitude)
     params['bee_metabolic_heat'] *= oxygen_factor
     params['air_film_resistance_outside'] *= (1 + (altitude / 1000) * 0.05)
-    params['ideal_hive_temperature'] -= (altitude / 1000) * 0.5
+    params['ideal_hive_temperature'] = adjust_temperature_for_altitude(params['ideal_hive_temperature'], altitude)
 
     # Colony calculations
     calculated_colony_size = 50000 * (params['colony_size'] / 100)
