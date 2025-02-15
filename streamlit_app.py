@@ -14,12 +14,6 @@ IDEAL_HIVE_TEMPERATURE = 35.0  # °C
 
 # Utility Functions
 
-def main():
-    st.set_page_config(
-        page_title="Hive Thermal Dashboard",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
 def celsius_to_kelvin(celsius):
     """Convert Celsius to Kelvin."""
     return celsius + KELVIN_CONVERSION
@@ -114,7 +108,14 @@ def calculate_hive_temperature(params, boxes, ambient_temp_c, is_daytime, altitu
         'oxygen_factor': oxygen_factor,
         'heat_transfer': final_heat_transfer / 1000
     }
+    
+st.set_page_config(
+    page_title="Hive Thermal Dashboard",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
+def main():
 # Streamlit Setup
 st.set_page_config(
     page_title="Hive Thermal Dashboard",
