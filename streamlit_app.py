@@ -30,6 +30,55 @@ class Box:
     cooling_effect: float
 
 # ========================
+# External API Calls
+# ========================
+
+@st.cache_data(show_spinner=False)
+def get_temperature_from_coordinates(lat: float, lon: float) -> Optional[float]:
+    """
+    Retrieve the current temperature from the Open-Meteo API for the provided coordinates.
+    """
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true&timezone=auto"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+        if "current_weather" in data:
+            return data["current_weather"]["temperature"]
+        else:
+            st.error("No current weather data found in the response.")
+            return None
+    except requests.HTTPError as e:
+        st.error(f"Error fetching weather data: {str(e)}. Status code: {e.response.status_code}")
+        return None
+    except Exception as e:
+        st.error(f"An unexpected error occurred while fetching weather data: {str(e)}")
+        return None
+
+@st.cache_data(show_spinner=False)
+def get_altitude_from_coordinates(lat: float, lon: float) -> Optional[float]:
+    """
+    Retrieve the altitude (elevation in meters) for the provided coordinates using the Open-Elevation API.
+    """
+    url = f"https://api.open-elevation.com/api/v1/lookup?locations={lat},{lon}"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+        # The API returns a list of results; we take the first one.
+        if "results" in data and len(data["results"]) > 0:
+            return data["results"][0]["elevation"]
+        else:
+            st.error("No elevation data found for the provided coordinates.")
+            return None
+    except requests.HTTPError as e:
+        st.error(f"Error fetching elevation data: {str(e)}. Status code: {e.response.status_code}")
+        return None
+    except Exception as e:
+        st.error(f"An unexpected error occurred while fetching elevation data: {str(e)}")
+        return None
+
+# ========================
 # Thermal Calculations
 # ========================
 
@@ -57,7 +106,7 @@ def calculate_relative_humidity_at_altitude(base_humidity: float, base_temp: flo
     """
     A = 17.27
     B = 237.7  # °C
-    LAPSE_RATE = 6.5  # °C per 1000m (this is used only for humidity adjustment)
+    LAPSE_RATE = 6.5  # °C per 1000m (used for humidity only)
     temp_at_altitude = base_temp - (altitude * LAPSE_RATE / 1000)
     
     def vapor_pressure(T: float) -> float:
@@ -125,26 +174,6 @@ def adjust_temperature_for_conditions(
     if debug:
         st.write(f"[DEBUG] Final adjusted temp: {final_temp}")
     return final_temp
-
-gps_coordinates = st.text_input("Enter GPS Coordinates (lat, lon)", "4.6097, -74.0817")
-try:
-    lat, lon = map(float, gps_coordinates.split(','))
-    ambient_temperature = get_temperature_from_coordinates(lat, lon)
-    if ambient_temperature is None:
-        ambient_temperature = 25.0
-    
-    # Try to get the altitude automatically:
-    altitude = get_altitude_from_coordinates(lat, lon)
-    if altitude is None:
-        st.warning("Could not retrieve altitude automatically. Please use the slider below.")
-        altitude = st.slider("Simulated Altitude (meters)", 0, 3800, 0, 100)
-    else:
-        st.info(f"Retrieved altitude: {altitude:.1f} m")
-except ValueError:
-    st.error("Please enter valid coordinates in the format 'lat, lon'")
-    ambient_temperature = 25.0
-    altitude = st.slider("Simulated Altitude (meters)", 0, 3800, 0, 100)
-
 
 def calculate_hive_temperature(
     params: Dict[str, float],
@@ -274,32 +303,6 @@ def calculate_hive_temperature(
     }
 
 # ========================
-# Weather API Integration with Caching
-# ========================
-
-@st.cache_data(show_spinner=False)
-def get_temperature_from_coordinates(lat: float, lon: float) -> Optional[float]:
-    """
-    Retrieve the current temperature from the Open-Meteo API for the provided coordinates.
-    """
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true&timezone=auto"
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        data = response.json()
-        if "current_weather" in data:
-            return data["current_weather"]["temperature"]
-        else:
-            st.error("No current weather data found in the response.")
-            return None
-    except requests.HTTPError as e:
-        st.error(f"Error fetching weather data: {str(e)}. Status code: {e.response.status_code}")
-        return None
-    except Exception as e:
-        st.error(f"An unexpected error occurred while fetching weather data: {str(e)}")
-        return None
-
-# ========================
 # Visualization Functions
 # ========================
 
@@ -420,13 +423,21 @@ def main():
             ambient_temperature = get_temperature_from_coordinates(lat, lon)
             if ambient_temperature is None:
                 ambient_temperature = 25.0
+            
+            # Retrieve altitude automatically
+            altitude = get_altitude_from_coordinates(lat, lon)
+            if altitude is None:
+                st.warning("Could not retrieve altitude automatically. Please use the slider below.")
+                altitude = st.slider("Simulated Altitude (meters)", 0, 3800, 0, 100)
+            else:
+                st.info(f"Retrieved altitude: {altitude:.1f} m")
         except ValueError:
             st.error("Please enter valid coordinates in the format 'lat, lon'")
             ambient_temperature = 25.0
+            altitude = st.slider("Simulated Altitude (meters)", 0, 3800, 0, 100)
         
         st.subheader("🌍 Environmental Conditions")
         is_daytime = st.radio("Time of Day", ['Day', 'Night'], index=0) == 'Day'
-        altitude = st.slider("Simulated Altitude (meters)", 0, 3800, 0, 100)
         
         col1a, col1b, col1c = st.columns(3)
         with col1a:
