@@ -126,30 +126,25 @@ def get_temperature_from_coordinates(lat: float, lon: float) -> Optional[float]:
         return None
 
 # Visualization functions
-def create_temperature_chart(box_temperatures: List[float]) -> str:
+def create_temperature_chart(box_temperatures: List[float]) -> None:
     """Create temperature distribution chart."""
-    fig, ax = plt.subplots()
-    ax.bar([f'Box {i+1}' for i in range(len(box_temperatures))], box_temperatures)
-    ax.set_ylabel('Temperature (°C)')
-    ax.set_title('Temperature Distribution Across Hive Boxes')
-    
-    buf = BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-    return base64.b64encode(buf.read()).decode()
+    fig = plt.figure(figsize=(10, 6))
+    plt.bar([f'Box {i+1}' for i in range(len(box_temperatures))], box_temperatures)
+    plt.ylabel('Temperature (°C)')
+    plt.title('Temperature Distribution Across Hive Boxes')
+    st.pyplot(fig)
+    plt.close(fig)
 
-def create_altitude_chart(altitude_range: np.ndarray, temperatures: List[float]) -> str:
+def create_altitude_chart(altitude_range: np.ndarray, temperatures: List[float]) -> None:
     """Create altitude effect visualization."""
-    fig, ax = plt.subplots()
-    ax.plot(altitude_range, temperatures)
-    ax.set_title("Hive Temperature vs. Altitude")
-    ax.set_xlabel("Altitude (m)")
-    ax.set_ylabel("Hive Temperature (°C)")
-    
-    buf = BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-    return base64.b64encode(buf.read()).decode()
+    fig = plt.figure(figsize=(10, 6))
+    plt.plot(altitude_range, temperatures)
+    plt.title("Hive Temperature vs. Altitude")
+    plt.xlabel("Altitude (m)")
+    plt.ylabel("Hive Temperature (°C)")
+    plt.grid(True)
+    st.pyplot(fig)
+    plt.close(fig)
 
 # State initialization
 def initialize_state() -> None:
@@ -270,25 +265,26 @@ def main():
         
         # Visualizations
         st.subheader("📈 Temperature Distribution")
-        temp_chart = create_temperature_chart(results['box_temperatures'])
-        st.markdown(f'<img src="data:image/png;base64,{temp_chart}"/>', unsafe_allow_html=True)
+        create_temperature_chart(results['box_temperatures'])
         
         # Altitude effect
         st.subheader("📈 Altitude Effect")
         altitude_temps = []
         altitude_range = np.arange(0, 4000, 100)
-        for alt in altitude_range:
-            alt_results = calculate_hive_temperature(
-                params, 
-                st.session_state.boxes, 
-                ambient_temperature, 
-                is_daytime, 
-                alt
-            )
-            altitude_temps.append(alt_results['base_temperature'])
         
-        altitude_chart = create_altitude_chart(altitude_range, altitude_temps)
-        st.markdown(f'<img src="data:image/png;base64,{altitude_chart}"/>', unsafe_allow_html=True)
+        # Calculate temperatures for different altitudes
+        with st.spinner('Calculating altitude effects...'):
+            for alt in altitude_range:
+                alt_results = calculate_hive_temperature(
+                    params.copy(),  # Use a copy to prevent parameter modification
+                    st.session_state.boxes, 
+                    ambient_temperature, 
+                    is_daytime, 
+                    alt
+                )
+                altitude_temps.append(alt_results['base_temperature'])
+        
+        create_altitude_chart(altitude_range, altitude_temps)
         
         # Additional metrics
         st.metric("Total Hive Volume", f"{results['total_volume']:.2f} m³")
