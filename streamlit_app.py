@@ -129,6 +129,9 @@ def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
                              altitude: float, rain_intensity: float = 0.0,
                              wind_speed: float = 0.0, humidity: float = 50.0) -> Dict[str, Any]:
     """Calculate hive temperature with all environmental factors."""
+    # Get oxygen factor for altitude
+    oxygen_factor = calculate_oxygen_factor(altitude)
+    
     # Calculate humidity at altitude
     altitude_humidity = calculate_relative_humidity_at_altitude(humidity, ambient_temp_c, altitude)
     
@@ -163,6 +166,58 @@ def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
         wind_factor = max(0.5, 1 - (wind_speed / 20))
         params['air_film_resistance_outside'] *= wind_factor
         params['bee_metabolic_heat'] *= (1 + (wind_speed / 20) * 0.4)
+    
+    # Calculate colony metrics
+    calculated_colony_size = 50000 * (params['colony_size'] / 100)
+    colony_metabolic_heat = calculated_colony_size * params['bee_metabolic_heat'] * oxygen_factor
+
+    # Calculate volumes and surface areas
+    total_volume = sum(
+        (3 * math.sqrt(3) / 2) * ((box.width / (100 * math.sqrt(3))) ** 2) * (box.height / 100)
+        for box in boxes
+    )
+    
+    total_surface_area = sum(calculate_box_surface_area(box.width, box.height) for box in boxes)
+
+    # Thermal resistance calculations
+    wood_resistance = (params['wood_thickness'] / 100) / params['wood_thermal_conductivity']
+    total_resistance = wood_resistance + params['air_film_resistance_outside']
+
+    # Temperature calculations
+    if adjusted_ambient_temp >= params['ideal_hive_temperature']:
+        cooling_effort = min(1.0, (adjusted_ambient_temp - params['ideal_hive_temperature']) / 10)
+        temp_decrease = 2.0 * cooling_effort if is_daytime else 1.0 * cooling_effort
+        estimated_temp_c = max(params['ideal_hive_temperature'], adjusted_ambient_temp - temp_decrease)
+    else:
+        heat_contribution = min(
+            params['ideal_hive_temperature'] - adjusted_ambient_temp,
+            (colony_metabolic_heat * total_resistance) / total_surface_area
+        )
+        heat_contribution *= 0.9 if not is_daytime else 1.0
+        estimated_temp_c = adjusted_ambient_temp + heat_contribution
+
+    # Final adjustments
+    estimated_temp_c = min(50, max(0, estimated_temp_c))
+
+    # Calculate box temperatures
+    box_temperatures = [
+        max(0, min(50, estimated_temp_c - box.cooling_effect))
+        for box in boxes
+    ]
+
+    return {
+        'calculated_colony_size': calculated_colony_size,
+        'colony_metabolic_heat': colony_metabolic_heat / 1000,  # Convert to kW
+        'base_temperature': estimated_temp_c,
+        'box_temperatures': box_temperatures,
+        'total_volume': total_volume,
+        'total_surface_area': total_surface_area,
+        'thermal_resistance': total_resistance,
+        'ambient_temperature': adjusted_ambient_temp,
+        'oxygen_factor': oxygen_factor,
+        'altitude_humidity': altitude_humidity,
+        'heat_transfer': (total_surface_area * abs(estimated_temp_c - adjusted_ambient_temp)) / total_resistance / 1000
+    }
 
     # Colony calculations
     calculated_colony_size = 50000 * (params['colony_size'] / 100)
