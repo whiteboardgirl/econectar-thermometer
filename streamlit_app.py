@@ -196,7 +196,7 @@ def get_temperature_from_coordinates(lat: float, lon: float) -> Optional[float]:
     """
     Retrieve the current temperature from the Open-Meteo API for the provided coordinates.
     """
-    url = f'https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}¤t_weather=true'
+    url = f'https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true'
     try:
         response = requests.get(url)
         response.raise_for_status()
