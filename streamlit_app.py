@@ -263,6 +263,7 @@ def render_sidebar() -> Dict[str, Any]:
         'bee_metabolic_heat': ThermalConfig.BEE_METABOLIC_HEAT
     }
     
+    st.sidebar.write("Current params:", params)  # Debug: Confirm parameters are updating
     return params
 
 def render_box_controls() -> None:
@@ -353,6 +354,10 @@ def main():
             humidity
         )
         
+        # Debug info to see if calculations are using updated params
+        if st.checkbox("Show Debug Info"):
+            st.write("Debug Info:", results)
+        
         # Display metrics
         st.subheader("📊 Analysis Results")
         
@@ -397,6 +402,11 @@ def main():
         st.metric("Total Hive Volume", f"{results['total_volume']:.2f} m³")
         st.metric("Total Surface Area", f"{results['total_surface_area']:.2f} m²")
         st.metric("Heat Transfer", f"{results['heat_transfer']:.3f} kW")
+
+    # Force rerun if params change - this might not be necessary but can be useful for debugging
+    if 'last_params' not in st.session_state or st.session_state.last_params != params:
+        st.session_state.last_params = params
+        st.experimental_rerun()
 
 if __name__ == "__main__":
     try:
