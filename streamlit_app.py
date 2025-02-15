@@ -13,6 +13,13 @@ BEE_METABOLIC_HEAT = 0.0040  # Watts per bee
 IDEAL_HIVE_TEMPERATURE = 35.0  # °C
 
 # Utility Functions
+
+def main():
+    st.set_page_config(
+        page_title="Hive Thermal Dashboard",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
 def celsius_to_kelvin(celsius):
     """Convert Celsius to Kelvin."""
     return celsius + KELVIN_CONVERSION
@@ -93,6 +100,7 @@ def calculate_hive_temperature(params, boxes, ambient_temp_c, is_daytime, altitu
         max(0, min(50, estimated_temp_c - box['cooling_effect']))
         for box in boxes
     ]
+    
 
     return {
         'calculated_colony_size': calculated_colony_size,
@@ -815,4 +823,5 @@ if __name__ == "__main__":
         st.error(f"An unexpected error occurred: {e}")
         st.write("Please check the input parameters or try refreshing the page.")
 
-        
+   if __name__ == "__main__":
+    main()     
