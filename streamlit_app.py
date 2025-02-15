@@ -190,18 +190,23 @@ def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
         'heat_transfer': heat_transfer
     }
 
-# Weather API Integration with Caching
 @st.cache_data(show_spinner=False)
 def get_temperature_from_coordinates(lat: float, lon: float) -> Optional[float]:
     """
     Retrieve the current temperature from the Open-Meteo API for the provided coordinates.
     """
-    url = f'https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true'
+    # Adding timezone=auto ensures that the API returns data in the correct local timezone.
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true&timezone=auto"
     try:
         response = requests.get(url)
         response.raise_for_status()
         data = response.json()
-        return data['current_weather']['temperature']
+        # Check if the 'current_weather' key exists
+        if "current_weather" in data:
+            return data["current_weather"]["temperature"]
+        else:
+            st.error("No current weather data found in the response.")
+            return None
     except requests.HTTPError as e:
         st.error(f"Error fetching weather data: {str(e)}. Status code: {e.response.status_code}")
         return None
