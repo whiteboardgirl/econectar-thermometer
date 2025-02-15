@@ -78,6 +78,8 @@ def adjust_temperature_for_conditions(base_temp: float, altitude: float, is_dayt
     """
     Adjust temperature based on environmental conditions including humidity.
     """
+    st.write(f"Base temp: {base_temp}, Altitude: {altitude}, Is Day: {is_daytime}, Rain: {rain_intensity}, Wind: {wind_speed}, Humidity: {humidity}")
+    
     altitude_humidity = calculate_relative_humidity_at_altitude(humidity, base_temp, altitude)
     
     LAPSE_RATE = 6.5  # °C per 1000m
@@ -102,6 +104,7 @@ def adjust_temperature_for_conditions(base_temp: float, altitude: float, is_dayt
         wind_adjustment = 0
     
     final_temp = time_adjusted_temp + humidity_adjustment + rain_adjustment + wind_adjustment
+    st.write(f"Final temp: {final_temp}")
     return final_temp
 
 def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box], 
@@ -109,12 +112,16 @@ def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
                                altitude: float, rain_intensity: float = 0.0,
                                wind_speed: float = 0.0, humidity: float = 50.0) -> Dict[str, Any]:
     """Calculate hive temperature with all environmental factors."""
+    st.write("Input params:", params)
+    st.write(f"Ambient temp: {ambient_temp_c}, Is Day: {is_daytime}, Altitude: {altitude}")
+    
     config = ThermalConfig()
     oxygen_factor = calculate_oxygen_factor(altitude)
     
     adjusted_ambient_temp = adjust_temperature_for_conditions(
         ambient_temp_c, altitude, is_daytime, rain_intensity, wind_speed, humidity
     )
+    st.write(f"Adjusted ambient temp: {adjusted_ambient_temp}")
     
     altitude_humidity = calculate_relative_humidity_at_altitude(humidity, ambient_temp_c, altitude)
     
@@ -127,6 +134,8 @@ def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
         params['ideal_hive_temperature'] -= 0.5
         params['bee_metabolic_heat'] *= 0.8
         params['air_film_resistance_outside'] *= 1.2
+    
+    st.write("Adjusted params:", params)
     
     # Humidity effects on bee thermoregulation
     if altitude_humidity > 70:
@@ -147,6 +156,7 @@ def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
     # Colony calculations
     calculated_colony_size = 50000 * (params['colony_size'] / 100)
     colony_metabolic_heat = calculated_colony_size * params['bee_metabolic_heat'] * oxygen_factor
+    st.write(f"Colony size: {calculated_colony_size}, Metabolic heat: {colony_metabolic_heat}")
 
     # Volume and surface calculations
     total_volume = sum(
@@ -155,10 +165,12 @@ def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
     )
     
     total_surface_area = sum(calculate_box_surface_area(box.width, box.height) for box in boxes)
+    st.write(f"Total volume: {total_volume}, Total surface area: {total_surface_area}")
 
     # Thermal resistance
     wood_resistance = (params['wood_thickness'] / 100) / params['wood_thermal_conductivity']
     total_resistance = wood_resistance + params['air_film_resistance_outside']
+    st.write(f"Wood resistance: {wood_resistance}, Total resistance: {total_resistance}")
 
     # Temperature calculations
     if adjusted_ambient_temp >= params['ideal_hive_temperature']:
@@ -175,12 +187,17 @@ def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
 
     # Final adjustments
     estimated_temp_c = min(50, max(0, estimated_temp_c))
+    st.write(f"Estimated temp C: {estimated_temp_c}")
 
     # Calculate box temperatures
     box_temperatures = [
         max(0, min(50, estimated_temp_c - box.cooling_effect))
         for box in boxes
     ]
+    st.write("Box temperatures:", box_temperatures)
+
+    heat_transfer = (total_surface_area * abs(estimated_temp_c - adjusted_ambient_temp)) / total_resistance / 1000
+    st.write(f"Heat transfer: {heat_transfer}")
 
     return {
         'calculated_colony_size': calculated_colony_size,
@@ -193,13 +210,13 @@ def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
         'ambient_temperature': adjusted_ambient_temp,
         'oxygen_factor': oxygen_factor,
         'altitude_humidity': altitude_humidity,
-        'heat_transfer': (total_surface_area * abs(estimated_temp_c - adjusted_ambient_temp)) / total_resistance / 1000
+        'heat_transfer': heat_transfer
     }
 
 # Weather API integration
 def get_temperature_from_coordinates(lat: float, lon: float) -> Optional[float]:
     """Retrieve temperature data from coordinates."""
-    url = f'https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true'
+    url = f'https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}¤t_weather=true'
     try:
         response = requests.get(url)
         response.raise_for_status()
