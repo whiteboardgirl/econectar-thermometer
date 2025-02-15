@@ -822,6 +822,3 @@ if __name__ == "__main__":
     except Exception as e:
         st.error(f"An unexpected error occurred: {e}")
         st.write("Please check the input parameters or try refreshing the page.")
-
-   if __name__ == "__main__":
-    main()     
