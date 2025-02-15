@@ -126,24 +126,27 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def get_temperature_from_coordinates(lat, lon):
-    """Fetch current temperature from Open-Meteo API with enhanced error handling."""
-    if not (-90 <= lat <= 90):
-        st.error("Invalid latitude. Must be between -90 and 90.")
-        return None
-    if not (-180 <= lon <= 180):
-        st.error("Invalid longitude. Must be between -180 and 180.")
-        return None
-    
-    url = f'https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}¤t_weather=true'
-    response = requests.get(url)
-    
-    if response.status_code == 200:
+    url = f'https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true'
+    try:
+        response = requests.get(url)
+        response.raise_for_status()  # Will raise an HTTPError for bad responses
         data = response.json()
         return data['current_weather']['temperature']
-    else:
-        error_data = response.json()
-        st.error(f"Failed to fetch weather data. Status code: {response.status_code}. Error: {error_data.get('error', 'Unknown error')}")
-        st.write(f"Debug Info - URL: {url}")  
+    except requests.exceptions.HTTPError as errh:
+        st.error(f"Http Error: {errh}")
+        st.write(f"Debug Info - URL: {url}")
+    except requests.exceptions.ConnectionError as errc:
+        st.error(f"Error Connecting: {errc}")
+        st.write(f"Debug Info - URL: {url}")
+    except requests.exceptions.Timeout as errt:
+        st.error(f"Timeout Error: {errt}")
+        st.write(f"Debug Info - URL: {url}")
+    except requests.exceptions.RequestException as err:
+        st.error(f"Unknown Error: {err}")
+        st.write(f"Debug Info - URL: {url}")
+    except KeyError:
+        st.error("API response does not contain expected 'current_weather' key")
+        st.write(f"Debug Info - URL: {url}")
     return None
 
 # Initialize session state
