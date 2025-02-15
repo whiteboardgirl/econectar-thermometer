@@ -35,7 +35,6 @@ class Box:
 
 def calculate_oxygen_factor(altitude_m: float) -> float:
     """Calculate oxygen factor based on altitude."""
-    P0 = 1013.25  # Standard atmospheric pressure at sea level (hPa)
     H = 7400  # Scale height for Earth's atmosphere (m)
     pressure_ratio = math.exp(-altitude_m / H)
     return max(0.6, pressure_ratio)
@@ -55,9 +54,7 @@ def calculate_relative_humidity_at_altitude(base_humidity: float, base_temp: flo
                                             altitude: float) -> float:
     """
     Calculate relative humidity at altitude based on temperature and pressure changes.
-    
-    The Magnus-Tetens formula is used for vapor pressure calculations.
-    Note: This is a heuristic model and works best within a typical range of environmental conditions.
+    Uses the Magnus-Tetens formula for vapor pressure.
     """
     A = 17.27
     B = 237.7  # °C
@@ -69,7 +66,7 @@ def calculate_relative_humidity_at_altitude(base_humidity: float, base_temp: flo
     
     base_es = vapor_pressure(base_temp)
     altitude_es = vapor_pressure(temp_at_altitude)
-    pressure_ratio = math.exp(-altitude / 7400)  # using Earth's scale height
+    pressure_ratio = math.exp(-altitude / 7400)
     base_ea = base_es * (base_humidity / 100)
     altitude_ea = base_ea * pressure_ratio
     new_rh = (altitude_ea / altitude_es) * 100
@@ -83,7 +80,10 @@ def adjust_temperature_for_conditions(base_temp: float, altitude: float, is_dayt
                                       rain_intensity: float = 0.0, wind_speed: float = 0.0,
                                       humidity: float = 50.0, debug: bool = False) -> float:
     """
-    Adjust temperature based on environmental conditions including humidity, rain, and wind.
+    Adjust temperature based on environmental conditions including altitude, humidity, rain, and wind.
+    
+    Note: If the base_temp is obtained from a GPS measurement, it may already be at the correct altitude.
+    In that case, disable additional altitude correction.
     """
     if debug:
         st.write(f"[DEBUG] Base temp: {base_temp}, Altitude: {altitude}, "
@@ -91,6 +91,7 @@ def adjust_temperature_for_conditions(base_temp: float, altitude: float, is_dayt
     
     altitude_humidity = calculate_relative_humidity_at_altitude(humidity, base_temp, altitude)
     LAPSE_RATE = 6.5  # °C per 1000m
+    # Apply altitude correction only if desired
     altitude_adjusted_temp = base_temp - (altitude * LAPSE_RATE / 1000)
     
     DAY_NIGHT_DIFFERENCE = 8.0  # °C difference between day and night
@@ -105,7 +106,6 @@ def adjust_temperature_for_conditions(base_temp: float, altitude: float, is_dayt
     rain_adjustment = -RAIN_COOLING_EFFECT * rain_intensity * (1 - altitude_humidity / 200)
     
     if time_adjusted_temp <= 10 and wind_speed > 1.3:
-        # Wind chill calculation using the North American wind chill index formula
         wind_chill = (13.12 + 0.6215 * time_adjusted_temp - 11.37 * (wind_speed ** 0.16) +
                       0.3965 * time_adjusted_temp * (wind_speed ** 0.16))
         wind_adjustment = wind_chill - time_adjusted_temp
@@ -129,7 +129,6 @@ def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
         st.write("[DEBUG] Input params:", params)
         st.write(f"[DEBUG] Ambient temp: {ambient_temp_c}, Daytime: {is_daytime}, Altitude: {altitude}")
     
-    config = ThermalConfig()
     oxygen_factor = calculate_oxygen_factor(altitude)
     
     adjusted_ambient_temp = adjust_temperature_for_conditions(
@@ -153,7 +152,7 @@ def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
     if debug:
         st.write("[DEBUG] Time-adjusted params:", params)
     
-    # Adjust for high humidity
+    # High humidity adjustments
     if altitude_humidity > 70:
         evaporative_cooling_factor = 1 - ((altitude_humidity - 70) / 100)
         params['bee_metabolic_heat'] *= (1 + (1 - evaporative_cooling_factor) * 0.2)
@@ -169,13 +168,11 @@ def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
         params['air_film_resistance_outside'] *= wind_factor
         params['bee_metabolic_heat'] *= (1 + (wind_speed / 20) * 0.4)
     
-    # Colony-level calculations
     calculated_colony_size = 50000 * (params['colony_size'] / 100)
     colony_metabolic_heat = calculated_colony_size * params['bee_metabolic_heat'] * oxygen_factor
     if debug:
         st.write(f"[DEBUG] Calculated colony size: {calculated_colony_size}, Metabolic heat: {colony_metabolic_heat}")
     
-    # Volume and surface calculations for hive boxes
     total_volume = sum(
         (3 * math.sqrt(3) / 2) * ((box.width / (100 * math.sqrt(3))) ** 2) * (box.height / 100)
         for box in boxes
@@ -184,13 +181,11 @@ def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
     if debug:
         st.write(f"[DEBUG] Total volume: {total_volume}, Total surface area: {total_surface_area}")
     
-    # Thermal resistance: wood plus air film resistance
     wood_resistance = (params['wood_thickness'] / 100) / params['wood_thermal_conductivity']
     total_resistance = wood_resistance + params['air_film_resistance_outside']
     if debug:
         st.write(f"[DEBUG] Wood resistance: {wood_resistance}, Total resistance: {total_resistance}")
     
-    # Temperature estimation based on cooling and heating contributions
     if adjusted_ambient_temp >= params['ideal_hive_temperature']:
         cooling_effort = min(1.0, (adjusted_ambient_temp - params['ideal_hive_temperature']) / 10)
         temp_decrease = (2.0 if is_daytime else 1.0) * cooling_effort
@@ -203,12 +198,10 @@ def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
         heat_contribution *= 0.9 if not is_daytime else 1.0
         estimated_temp_c = adjusted_ambient_temp + heat_contribution
     
-    # Clamp estimated temperature within realistic limits
     estimated_temp_c = min(50, max(0, estimated_temp_c))
     if debug:
         st.write(f"[DEBUG] Estimated hive base temperature: {estimated_temp_c}")
     
-    # Calculate individual box temperatures
     box_temperatures = [
         max(0, min(50, estimated_temp_c - box.cooling_effect))
         for box in boxes
@@ -222,7 +215,7 @@ def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
     
     return {
         'calculated_colony_size': calculated_colony_size,
-        'colony_metabolic_heat': colony_metabolic_heat / 1000,  # Convert to kW
+        'colony_metabolic_heat': colony_metabolic_heat / 1000,  # kW
         'base_temperature': estimated_temp_c,
         'box_temperatures': box_temperatures,
         'total_volume': total_volume,
@@ -242,7 +235,6 @@ def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
 def get_temperature_from_coordinates(lat: float, lon: float) -> Optional[float]:
     """
     Retrieve the current temperature from the Open-Meteo API for the provided coordinates.
-    Caching is enabled to reduce API calls.
     """
     url = f'https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true'
     try:
@@ -300,7 +292,6 @@ def render_sidebar() -> Dict[str, Any]:
     """Render sidebar inputs and return the parameters."""
     st.sidebar.title("🐝 Configuration")
     
-    # Toggle for enabling/disabling debug messages
     debug = st.sidebar.checkbox("Enable Debug Output", value=False)
     
     params = {
@@ -317,6 +308,15 @@ def render_sidebar() -> Dict[str, Any]:
     }
     
     st.sidebar.write("Current params:", params)
+    
+    # New checkbox to control whether to apply additional altitude correction.
+    apply_altitude_correction = st.sidebar.checkbox(
+        "Simulate additional altitude change", value=False,
+        help="Disable if using GPS temperature (which is already altitude-adjusted)"
+    )
+    # Store this choice in the sidebar parameters for use later.
+    params['apply_altitude_correction'] = apply_altitude_correction
+    
     return params, debug
 
 def render_box_controls() -> None:
@@ -340,10 +340,8 @@ def render_box_controls() -> None:
 
 def main():
     """Main application entry point."""
-    # Initialize session state
     initialize_state()
     
-    # Set page configuration
     st.set_page_config(
         page_title="Hive Thermal Dashboard",
         layout="wide",
@@ -353,14 +351,11 @@ def main():
     st.title("🐝 Hive Thermal Dashboard")
     st.markdown("---")
     
-    # Create two main columns for inputs and results
     col1, col2 = st.columns([1, 1])
     
     with col1:
-        # Render sidebar parameters and debug toggle
         params, debug = render_sidebar()
         
-        # Location input and API temperature retrieval
         gps_coordinates = st.text_input("Enter GPS Coordinates (lat, lon)", "4.6097, -74.0817")
         try:
             lat, lon = map(float, gps_coordinates.split(','))
@@ -371,19 +366,19 @@ def main():
             st.error("Please enter valid coordinates in the format 'lat, lon'")
             ambient_temperature = 25.0
         
-        # Environmental conditions inputs
         st.subheader("🌍 Environmental Conditions")
         is_daytime = st.radio("Time of Day", ['Day', 'Night'], index=0) == 'Day'
-        altitude = st.slider("Altitude (meters)", 0, 3800, 0, 100)
+        # The altitude slider here is used only if the user wants to simulate extra altitude effect.
+        altitude_slider = st.slider("Simulated Altitude (meters)", 0, 3800, 0, 100)
+        # Use the altitude correction only if enabled; otherwise, set altitude to 0.
+        altitude = altitude_slider if params.get('apply_altitude_correction') else 0
         
-        # Weather condition inputs in a three-column layout
         col1a, col1b, col1c = st.columns(3)
         with col1a:
             humidity = st.slider("Relative Humidity (%)", 0, 100, 50,
                                  help="Base humidity at current location")
             altitude_humidity = calculate_relative_humidity_at_altitude(humidity, ambient_temperature, altitude)
             st.info(f"Humidity at altitude: {altitude_humidity:.1f}%")
-            
         with col1b:
             rain_intensity = st.slider("Rain Intensity", 0.0, 1.0, 0.0, 
                                        help="0 = No rain, 1 = Heavy rain")
@@ -393,13 +388,11 @@ def main():
         
         st.write(f"Current Ambient Temperature: {ambient_temperature}°C")
         
-        # Render hive box controls
         render_box_controls()
         
     with col2:
-        # Calculate hive temperature based on current parameters and environmental conditions
         results = calculate_hive_temperature(
-            params.copy(),  # Use a copy so original params remain unchanged
+            params.copy(),  # Use a copy so the original params remain unchanged
             st.session_state.boxes, 
             ambient_temperature, 
             is_daytime, 
@@ -410,11 +403,9 @@ def main():
             debug=debug
         )
         
-        # Option to show debug information
         if debug and st.checkbox("Show Detailed Debug Info"):
             st.write("[DEBUG] Calculation Results:", results)
         
-        # Display key metrics in a two-column layout
         st.subheader("📊 Analysis Results")
         col2a, col2b = st.columns(2)
         with col2a:
@@ -424,17 +415,14 @@ def main():
             st.metric("Colony Size", f"{int(results['calculated_colony_size']):,} bees")
             st.metric("Metabolic Heat", f"{results['colony_metabolic_heat']:.3f} kW")
         
-        # Display individual box temperatures
         st.subheader("📊 Box Temperatures")
         for i, temp in enumerate(results['box_temperatures']):
             st.markdown(f"**Box {i+1}:** {temp:.1f}°C")
             st.progress(max(0.0, min(1.0, temp / 50)))
         
-        # Visualization: Temperature distribution across boxes
         st.subheader("📈 Temperature Distribution")
         create_temperature_chart(results['box_temperatures'])
         
-        # Visualization: Altitude effect on hive temperature
         st.subheader("📈 Altitude Effect")
         altitude_range = np.arange(0, 4000, 100)
         altitude_temps = []
@@ -449,17 +437,15 @@ def main():
                     rain_intensity,
                     wind_speed,
                     humidity,
-                    debug=False  # No need for debug output in loop
+                    debug=False
                 )
                 altitude_temps.append(alt_results['base_temperature'])
         create_altitude_chart(altitude_range, altitude_temps)
         
-        # Additional metrics
         st.metric("Total Hive Volume", f"{results['total_volume']:.2f} m³")
         st.metric("Total Surface Area", f"{results['total_surface_area']:.2f} m²")
         st.metric("Heat Transfer", f"{results['heat_transfer']:.3f} kW")
     
-    # Optionally force rerun if parameters change to keep the state updated
     if 'last_params' not in st.session_state or st.session_state.last_params != params:
         st.session_state.last_params = params
         st.experimental_rerun()
