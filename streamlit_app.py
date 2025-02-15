@@ -199,7 +199,7 @@ def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
 # Weather API integration
 def get_temperature_from_coordinates(lat: float, lon: float) -> Optional[float]:
     """Retrieve temperature data from coordinates."""
-    url = f'https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}¤t_weather=true'
+    url = f'https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true'
     try:
         response = requests.get(url)
         response.raise_for_status()
