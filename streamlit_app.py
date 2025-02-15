@@ -71,28 +71,33 @@ def calculate_relative_humidity_at_altitude(base_humidity: float, base_temp: flo
     altitude_ea = base_ea * pressure_ratio
     new_rh = (altitude_ea / altitude_es) * 100
     
-    altitude_factor = (min(1.2, 1 + (altitude / 2000) * 0.2) if altitude <= 2000 
-                         else 1.2 * (1 - (altitude - 2000) / 6000 * 0.3))
+    altitude_factor = (min(1.2, 1 + (altitude / 2000) * 0.2)
+                       if altitude <= 2000 else 1.2 * (1 - (altitude - 2000) / 6000 * 0.3))
     
     return min(100, max(0, new_rh * altitude_factor))
 
 def adjust_temperature_for_conditions(base_temp: float, altitude: float, is_daytime: bool,
                                       rain_intensity: float = 0.0, wind_speed: float = 0.0,
-                                      humidity: float = 50.0, debug: bool = False) -> float:
+                                      humidity: float = 50.0,
+                                      apply_altitude_temp_correction: bool = True,
+                                      debug: bool = False) -> float:
     """
     Adjust temperature based on environmental conditions including altitude, humidity, rain, and wind.
     
-    Note: If the base_temp is obtained from a GPS measurement, it may already be at the correct altitude.
-    In that case, disable additional altitude correction.
+    If apply_altitude_temp_correction is True, the function subtracts an altitude-dependent lapse rate.
+    Otherwise, the base temperature remains unchanged.
     """
     if debug:
-        st.write(f"[DEBUG] Base temp: {base_temp}, Altitude: {altitude}, "
-                 f"Daytime: {is_daytime}, Rain: {rain_intensity}, Wind: {wind_speed}, Humidity: {humidity}")
+        st.write(f"[DEBUG] Base temp: {base_temp}, Altitude: {altitude}, Daytime: {is_daytime}, "
+                 f"Rain: {rain_intensity}, Wind: {wind_speed}, Humidity: {humidity}")
     
     altitude_humidity = calculate_relative_humidity_at_altitude(humidity, base_temp, altitude)
     LAPSE_RATE = 6.5  # °C per 1000m
-    # Apply altitude correction only if desired
-    altitude_adjusted_temp = base_temp - (altitude * LAPSE_RATE / 1000)
+    
+    if apply_altitude_temp_correction:
+        altitude_adjusted_temp = base_temp - (altitude * LAPSE_RATE / 1000)
+    else:
+        altitude_adjusted_temp = base_temp  # Do not adjust ambient temperature
     
     DAY_NIGHT_DIFFERENCE = 8.0  # °C difference between day and night
     time_adjusted_temp = altitude_adjusted_temp + (DAY_NIGHT_DIFFERENCE / 2 if is_daytime else -DAY_NIGHT_DIFFERENCE / 2)
@@ -121,9 +126,12 @@ def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
                                ambient_temp_c: float, is_daytime: bool, 
                                altitude: float, rain_intensity: float = 0.0,
                                wind_speed: float = 0.0, humidity: float = 50.0,
+                               apply_altitude_temp_correction: bool = True,
                                debug: bool = False) -> Dict[str, Any]:
     """
     Calculate hive temperature taking into account environmental factors and hive configuration.
+    The ambient temperature is adjusted based on the toggle for altitude correction.
+    Altitude is still used for oxygen factor and humidity calculations.
     """
     if debug:
         st.write("[DEBUG] Input params:", params)
@@ -132,7 +140,8 @@ def calculate_hive_temperature(params: Dict[str, float], boxes: List[Box],
     oxygen_factor = calculate_oxygen_factor(altitude)
     
     adjusted_ambient_temp = adjust_temperature_for_conditions(
-        ambient_temp_c, altitude, is_daytime, rain_intensity, wind_speed, humidity, debug=debug
+        ambient_temp_c, altitude, is_daytime, rain_intensity, wind_speed, humidity,
+        apply_altitude_temp_correction=apply_altitude_temp_correction, debug=debug
     )
     if debug:
         st.write(f"[DEBUG] Adjusted ambient temp: {adjusted_ambient_temp}")
@@ -309,12 +318,11 @@ def render_sidebar() -> Dict[str, Any]:
     
     st.sidebar.write("Current params:", params)
     
-    # New checkbox to control whether to apply additional altitude correction.
+    # Toggle to control whether to apply additional altitude correction to the ambient temperature.
     apply_altitude_correction = st.sidebar.checkbox(
-        "Simulate additional altitude change", value=False,
-        help="Disable if using GPS temperature (which is already altitude-adjusted)"
+        "Apply altitude correction to ambient temp", value=True,
+        help="Disable if GPS temperature is already altitude-adjusted."
     )
-    # Store this choice in the sidebar parameters for use later.
     params['apply_altitude_correction'] = apply_altitude_correction
     
     return params, debug
@@ -368,10 +376,8 @@ def main():
         
         st.subheader("🌍 Environmental Conditions")
         is_daytime = st.radio("Time of Day", ['Day', 'Night'], index=0) == 'Day'
-        # The altitude slider here is used only if the user wants to simulate extra altitude effect.
-        altitude_slider = st.slider("Simulated Altitude (meters)", 0, 3800, 0, 100)
-        # Use the altitude correction only if enabled; otherwise, set altitude to 0.
-        altitude = altitude_slider if params.get('apply_altitude_correction') else 0
+        # Always use the slider value for altitude (used for oxygen factor, humidity, etc.)
+        altitude = st.slider("Simulated Altitude (meters)", 0, 3800, 0, 100)
         
         col1a, col1b, col1c = st.columns(3)
         with col1a:
@@ -400,6 +406,7 @@ def main():
             rain_intensity,
             wind_speed,
             humidity,
+            apply_altitude_temp_correction=params.get('apply_altitude_correction', True),
             debug=debug
         )
         
@@ -437,6 +444,7 @@ def main():
                     rain_intensity,
                     wind_speed,
                     humidity,
+                    apply_altitude_temp_correction=params.get('apply_altitude_correction', True),
                     debug=False
                 )
                 altitude_temps.append(alt_results['base_temperature'])
