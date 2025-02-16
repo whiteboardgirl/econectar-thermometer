@@ -246,7 +246,7 @@ def calculate_hive_temperature(
             params['air_film_resistance_outside'] *= wind_factor
             params['bee_metabolic_heat'] *= (1 + (wind_speed / 20) * 0.4)
     
-        calculated_colony_size = 50000 * (params['colony_size'] / 100)
+        calculated_colony_size = 2000 * (params['colony_size'] / 100)
         colony_metabolic_heat = calculated_colony_size * params['bee_metabolic_heat'] * oxygen_factor
     
         total_volume = sum(
