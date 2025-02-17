@@ -519,6 +519,34 @@ def plot_hive_3d_structure(boxes: List[HiveBox], box_temps: List[float], species
     )
     return fig
 
+def is_daytime_calc(lat: float, lon: float) -> bool:
+    """
+    Determines if it's currently daytime at the given coordinates.
+    
+    Args:
+        lat: Latitude in degrees
+        lon: Longitude in degrees
+        
+    Returns:
+        bool: True if it's daytime, False if it's nighttime
+    """
+    try:
+        # Get timezone for the location
+        tf = TimezoneFinder()
+        timezone_str = tf.timezone_at(lat=lat, lng=lon)
+        if not timezone_str:
+            return True  # Default to daytime if timezone can't be determined
+        
+        # Get current time in the local timezone
+        timezone = pytz.timezone(timezone_str)
+        current_time = datetime.datetime.now(timezone)
+        
+        # Consider daytime between 6 AM and 6 PM
+        return 6 <= current_time.hour < 18
+    except Exception as e:
+        st.warning(f"Could not determine daytime status: {e}")
+        return True  # Default to daytime in case of errors
+
 def main():
     """Main application function."""
     st.set_page_config(page_title="Stingless Bee Hive Thermal Simulator", layout="wide")
