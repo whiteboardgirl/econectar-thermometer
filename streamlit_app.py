@@ -1,528 +1,744 @@
+# Standard library imports
+import datetime
+import os
+from dataclasses import dataclass
+from typing import List, Tuple, Dict
+
+# Third-party imports
 import streamlit as st
 import numpy as np
-import math
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 import requests
-from dataclasses import dataclass
-from typing import Dict, List, Any, Optional
+import pytz
+from timezonefinder import TimezoneFinder
 
-# ========================
-# Configuration & Constants
-# ========================
+# Data classes
+@dataclass
+class BeeSpecies:
+    name: str
+    metabolic_rate: float
+    colony_size_factor: int
+    ideal_temp: Tuple[float, float]
+    humidity_range: Tuple[float, float]
+    nest_conductivity: float
+    max_cooling: float
+    activity_profile: str
 
 @dataclass
-class ThermalConfig:
-    """Configuration constants for thermal calculations."""
-    AIR_FILM_RESISTANCE_OUTSIDE: float = 0.04  # m²K/W
-    BEE_METABOLIC_HEAT: float = 0.0040  # Watts per bee
-    IDEAL_HIVE_TEMPERATURE: float = 35.0  # °C
-
-# ========================
-# Data Models
-# ========================
-
-@dataclass
-class Box:
-    """Represents a single hive box."""
+class HiveBox:
     id: int
     width: float
     height: float
+    depth: float
     cooling_effect: float
+    propolis_thickness: float = 1.5
+    pdrc_coating: bool = False
 
-# ========================
-# External API Calls
-# ========================
+    def adjusted_cooling(self, environment_factors):
+        """Compute hive cooling effectiveness with or without CryoX coating."""
+        base_cooling = self.cooling_effect
+        if self.pdrc_coating:
+            pdrc_performance = cryox_performance(**environment_factors) / 100
+            return base_cooling * (1 + pdrc_performance)
+        return base_cooling
+
+# Configuration constants
+SPECIES_CONFIG = {
+    "Melipona": BeeSpecies(
+        name="Melipona",
+        metabolic_rate=0.0088,
+        colony_size_factor=700,
+        ideal_temp=(30.0, 33.0),
+        humidity_range=(50.0, 70.0),
+        nest_conductivity=0.09,
+        max_cooling=1.5,
+        activity_profile="Diurnal"
+    ),
+    "Scaptotrigona": BeeSpecies(
+        name="Scaptotrigona",
+        metabolic_rate=0.0105,
+        colony_size_factor=1000,
+        ideal_temp=(31.0, 35.0),
+        humidity_range=(40.0, 70.0),
+        nest_conductivity=0.11,
+        max_cooling=1.8,
+        activity_profile="Morning"
+    ),
+
+    "Trigona fulviventris": BeeSpecies(
+        name="Trigona fulviventris",
+        metabolic_rate=0.0095,
+        colony_size_factor=800,
+        ideal_temp=(32.0, 36.0),
+        humidity_range=(45.0, 65.0),
+        nest_conductivity=0.10,
+        max_cooling=1.6,
+        activity_profile="Diurnal"
+    ),
+    "Cephalotrigona femorata": BeeSpecies(
+        name="Cephalotrigona femorata",
+        metabolic_rate=0.0110,
+        colony_size_factor=600,
+        ideal_temp=(29.0, 33.0),
+        humidity_range=(50.0, 70.0),
+        nest_conductivity=0.095,
+        max_cooling=1.55,
+        activity_profile="Diurnal"
+    ),
+    "Melipona eburnea": BeeSpecies(
+        name="Melipona eburnea",
+        metabolic_rate=0.0090,
+        colony_size_factor=750,
+        ideal_temp=(30.5, 33.5),
+        humidity_range=(50.0, 70.0),
+        nest_conductivity=0.085,
+        max_cooling=1.6,
+        activity_profile="Diurnal"
+    ),
+    "Melipona compressipes": BeeSpecies(
+        name="Melipona compressipes",
+        metabolic_rate=0.0100,
+        colony_size_factor=800,
+        ideal_temp=(31.0, 34.0),
+        humidity_range=(50.0, 68.0),
+        nest_conductivity=0.088,
+        max_cooling=1.7,
+        activity_profile="Diurnal"
+    ),
+    "Trigona spinipes": BeeSpecies(
+        name="Trigona spinipes",
+        metabolic_rate=0.0092,
+        colony_size_factor=850,
+        ideal_temp=(31.0, 35.0),
+        humidity_range=(45.0, 65.0),
+        nest_conductivity=0.095,
+        max_cooling=1.65,
+        activity_profile="Diurnal"
+    )
+}
+
+# API endpoints
+OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
+OPEN_ELEVATION_URL = "https://api.open-elevation.com/api/v1/lookup?locations={lat},{lon}"
+
+# Utility functions
+def parse_gps_input(gps_str: str) -> Tuple[float, float] | None:
+    try:
+        lat, lon = map(float, gps_str.strip().split(','))
+        return lat, lon
+    except ValueError:
+        return None
 
 @st.cache_data(show_spinner=False)
-def get_temperature_from_coordinates(lat: float, lon: float) -> Optional[float]:
-    """
-    Retrieve the current temperature from the Open-Meteo API for the provided coordinates.
-    """
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true&timezone=auto"
+def get_weather_data(lat: float, lon: float) -> Dict | None:
+    """Fetches weather data from Open-Meteo API."""
     try:
-        response = requests.get(url)
+        response = requests.get(OPEN_METEO_URL.format(lat=lat, lon=lon), timeout=5)
         response.raise_for_status()
         data = response.json()
-        if "current_weather" in data:
-            return data["current_weather"]["temperature"]
-        else:
-            st.error("No current weather data found in the response.")
-            return None
-    except requests.HTTPError as e:
-        st.error(f"Error fetching weather data: {str(e)}. Status code: {e.response.status_code}")
-        return None
+        current = data.get("current_weather")
+        if current:
+            return {
+                "temperature": current.get("temperature"),
+                "windspeed": current.get("windspeed")
+            }
     except Exception as e:
-        st.error(f"An unexpected error occurred while fetching weather data: {str(e)}")
-        return None
+        st.error(f"Failed to retrieve weather data: {e}")
+    return None
 
 @st.cache_data(show_spinner=False)
-def get_altitude_from_coordinates(lat: float, lon: float) -> Optional[float]:
-    """
-    Retrieve the altitude (elevation in meters) for the provided coordinates using the Open-Elevation API.
-    """
-    url = f"https://api.open-elevation.com/api/v1/lookup?locations={lat},{lon}"
+def get_altitude(lat: float, lon: float) -> float | None:
+    """Fetches altitude data from Open Elevation API."""
     try:
-        response = requests.get(url)
+        response = requests.get(OPEN_ELEVATION_URL.format(lat=lat, lon=lon), timeout=5)
         response.raise_for_status()
         data = response.json()
-        # The API returns a list of results; we take the first one.
-        if "results" in data and len(data["results"]) > 0:
-            return data["results"][0]["elevation"]
-        else:
-            st.error("No elevation data found for the provided coordinates.")
-            return None
-    except requests.HTTPError as e:
-        st.error(f"Error fetching elevation data: {str(e)}. Status code: {e.response.status_code}")
-        return None
+        results = data.get("results")
+        if results and isinstance(results, list):
+            return results[0].get("elevation")
     except Exception as e:
-        st.error(f"An unexpected error occurred while fetching elevation data: {str(e)}")
-        return None
+        st.error(f"Failed to retrieve altitude data: {e}")
+    return None
 
-# ========================
-# Thermal Calculations
-# ========================
+def cryox_performance(cloud_cover, humidity, wind_speed, temperature, solar_angle, air_quality, uv_index):
+    """Calculate CryoX PDRC surface effectiveness."""
+    w_h, w_w, w_t, w_s, w_q, w_u = 0.35, 0.25, 0.15, 0.15, 0.10, 0.15
 
-def calculate_oxygen_factor(altitude_m: float) -> float:
-    """Calculate oxygen factor based on altitude."""
-    H = 7400  # Scale height for Earth's atmosphere (m)
-    pressure_ratio = math.exp(-altitude_m / H)
-    return max(0.6, pressure_ratio)
+    P_h = max(0, 1 - humidity / 100)
+    P_w = max(0, 1 - abs(wind_speed - 5) / 10)
+    P_t = min(1, temperature / 100)
+    P_s = min(1, solar_angle / 90)
+    P_q = air_quality
+    P_u = max(0, 1 - uv_index / 11)
 
-def calculate_box_surface_area(width_cm: float, height_cm: float) -> float:
-    """
-    Calculate the total surface area for a hexagonal box in square meters.
-    Assumes a hexagon-based design where the width defines the distance between parallel sides.
-    """
-    width_m, height_m = width_cm / 100, height_cm / 100
-    side_length = width_m / math.sqrt(3)
-    hexagon_area = (3 * math.sqrt(3) / 2) * (side_length ** 2)
-    sides_area = 6 * side_length * height_m
-    return (2 * hexagon_area) + sides_area
+    performance = (1 - cloud_cover**1.5) * (
+        w_h * P_h + w_w * P_w + w_t * P_t + w_s * P_s + w_q * P_q + w_u * P_u
+    ) * 100
 
-def calculate_relative_humidity_at_altitude(base_humidity: float, base_temp: float, altitude: float) -> float:
-    """
-    Calculate relative humidity at altitude based on temperature and pressure changes.
-    Uses the Magnus-Tetens formula for vapor pressure.
-    """
-    A = 17.27
-    B = 237.7  # °C
-    LAPSE_RATE = 6.5  # °C per 1000m (used for humidity only)
-    temp_at_altitude = base_temp - (altitude * LAPSE_RATE / 1000)
-    
-    def vapor_pressure(T: float) -> float:
-        return 0.611 * math.exp((A * T) / (T + B))  # in kPa
-    
-    base_es = vapor_pressure(base_temp)
-    altitude_es = vapor_pressure(temp_at_altitude)
-    pressure_ratio = math.exp(-altitude / 7400)
-    base_ea = base_es * (base_humidity / 100)
-    altitude_ea = base_ea * pressure_ratio
-    new_rh = (altitude_ea / altitude_es) * 100
-    
-    altitude_factor = (min(1.2, 1 + (altitude / 2000) * 0.2)
-                       if altitude <= 2000 else 1.2 * (1 - (altitude - 2000) / 6000 * 0.3))
-    
-    return min(100, max(0, new_rh * altitude_factor))
+    return max(0, performance)
 
-def adjust_temperature_for_conditions(
-    base_temp: float,
-    altitude: float,
-    is_daytime: bool,
-    rain_intensity: float = 0.0,
-    wind_speed: float = 0.0,
-    humidity: float = 50.0,
-    apply_altitude_temp_correction: bool = True,
-    lapse_rate: float = 6.5,
-    debug: bool = False
-) -> float:
-    """
-    Adjust temperature based on environmental conditions.
-    
-    If apply_altitude_temp_correction is True, subtract an altitude-dependent lapse rate.
-    The lapse_rate (°C per 1000 m) is adjustable via a slider.
-    """
-    if debug:
-        st.write(f"[DEBUG] Base temp: {base_temp}, Altitude: {altitude}, Daytime: {is_daytime}, "
-                 f"Rain: {rain_intensity}, Wind: {wind_speed}, Humidity: {humidity}, Lapse rate: {lapse_rate}")
-    
-    altitude_humidity = calculate_relative_humidity_at_altitude(humidity, base_temp, altitude)
-    
-    if apply_altitude_temp_correction:
-        altitude_adjusted_temp = base_temp - (altitude * lapse_rate / 1000)
-    else:
-        altitude_adjusted_temp = base_temp  # Use the GPS temperature as is
-    
-    DAY_NIGHT_DIFFERENCE = 8.0  # °C difference between day and night
-    time_adjusted_temp = altitude_adjusted_temp + (DAY_NIGHT_DIFFERENCE / 2 if is_daytime else -DAY_NIGHT_DIFFERENCE / 2)
-    
-    if time_adjusted_temp > 25 and altitude_humidity > 40:
-        humidity_adjustment = (altitude_humidity - 40) / 100 * (time_adjusted_temp - 25) * 0.5
-    else:
-        humidity_adjustment = 0
-    
-    RAIN_COOLING_EFFECT = 5.0  # Maximum cooling effect of heavy rain
-    rain_adjustment = -RAIN_COOLING_EFFECT * rain_intensity * (1 - altitude_humidity / 200)
-    
-    if time_adjusted_temp <= 10 and wind_speed > 1.3:
-        wind_chill = (13.12 + 0.6215 * time_adjusted_temp - 11.37 * (wind_speed ** 0.16) +
-                      0.3965 * time_adjusted_temp * (wind_speed ** 0.16))
-        wind_adjustment = wind_chill - time_adjusted_temp
-    else:
-        wind_adjustment = 0
-    
-    final_temp = time_adjusted_temp + humidity_adjustment + rain_adjustment + wind_adjustment
-    if debug:
-        st.write(f"[DEBUG] Final adjusted temp: {final_temp}")
-    return final_temp
+# Simulation functions
+@st.cache_data(ttl=1, show_spinner=False)
+def simulate_hive_temperature(species: BeeSpecies, colony_size_pct: float, nest_thickness: float,
+                            lid_thickness: float, boxes: List[HiveBox], ambient_temp: float,
+                            is_daytime: bool, altitude: float, rain_intensity: float,
+                            surface_area_exponent: float, lat: float, lon: float,
+                            day_of_year: int, **environment_factors) -> Dict:
+    """Simulates hive temperature with all environmental factors."""
+    # Adjust ambient temperature for altitude, species behavior, and rain
+    temp_adj = adjust_temperature(ambient_temp, altitude, species, is_daytime)
+    temp_adj -= (rain_intensity * 3)  # Enhanced rain cooling effect
 
-def calculate_hive_temperature(
-    params: Dict[str, float],
-    boxes: List[Box],
-    ambient_temp_c: float,
-    is_daytime: bool,
-    altitude: float,
-    rain_intensity: float = 0.0,
-    wind_speed: float = 0.0,
-    humidity: float = 50.0,
-    apply_altitude_temp_correction: bool = True,
-    lapse_rate: float = 6.5,
-    debug: bool = False
-) -> Dict[str, Any]:
-    """
-    Calculate hive temperature taking into account environmental factors and hive configuration.
-    If the "bypass" option is active, the hive base temperature is set equal to the GPS ambient temperature.
-    """
-    if debug:
-        st.write("[DEBUG] Input params:", params)
-        st.write(f"[DEBUG] Ambient temp: {ambient_temp_c}, Daytime: {is_daytime}, Altitude: {altitude}")
+    # Heat contributions
+    metabolic_heat = calculate_metabolic_heat(species, colony_size_pct, altitude)
+    solar_heat_gain = calculate_solar_heat_gain(lat, lon, is_daytime, day_of_year)
     
-    # Use altitude for oxygen factor and humidity calculations even if we bypass temperature adjustment.
-    oxygen_factor = calculate_oxygen_factor(altitude)
+    HONEY_HEAT_FACTOR = 0.25
+    honey_heat = len(boxes) * HONEY_HEAT_FACTOR * metabolic_heat
     
-    # Check if we are bypassing hive adjustments
-    if params.get("bypass_hive", False):
-        adjusted_ambient_temp = ambient_temp_c
-    else:
-        adjusted_ambient_temp = adjust_temperature_for_conditions(
-            ambient_temp_c, altitude, is_daytime, rain_intensity, wind_speed, humidity,
-            apply_altitude_temp_correction=apply_altitude_temp_correction,
-            lapse_rate=lapse_rate,
-            debug=debug
-        )
+    ENCLOSURE_HEAT_FACTOR = 1.5
+    BASE_HEAT_RETENTION = 2.0
     
-    if debug:
-        st.write(f"[DEBUG] Adjusted ambient temp: {adjusted_ambient_temp}")
+    total_heat = (metabolic_heat + solar_heat_gain + honey_heat) * ENCLOSURE_HEAT_FACTOR + BASE_HEAT_RETENTION
+
+    # Thermal resistances calculation
+    nest_resistance = (nest_thickness / 1000) / species.nest_conductivity
+    propolis_resistance = sum(box.propolis_thickness * 0.02 for box in boxes)
     
-    altitude_humidity = calculate_relative_humidity_at_altitude(humidity, ambient_temp_c, altitude)
+    LID_CONDUCTIVITY = 0.012
+    lid_resistance = (lid_thickness / 1000) / LID_CONDUCTIVITY
+    LID_INSULATION_FACTOR = 1.5
+    lid_resistance *= LID_INSULATION_FACTOR * len(boxes)
+
+    total_resistance = nest_resistance + propolis_resistance + lid_resistance + 0.1
+
+    # Surface area and heat calculations
+    total_surface_area = sum(
+        2 * ((box.width * box.height) + (box.width * box.depth) + (box.height * box.depth)) / 10000
+        for box in boxes
+    )
+    adjusted_surface = total_surface_area ** surface_area_exponent
+    adjusted_surface = max(adjusted_surface, 0.0001)
     
-    # Adjust simulation parameters based on time of day (skip if bypassing)
-    if not params.get("bypass_hive", False):
+    HEAT_RETENTION_FACTOR = 1.4
+    heat_gain = (total_heat * total_resistance * HEAT_RETENTION_FACTOR) / adjusted_surface
+
+    # Enhanced cooling effect calculation
+    MAX_COOLING_TEMP = 8.0  # Maximum cooling of 8°C
+    cooling_factor = min(1.0, colony_size_pct / 80.0)
+    
+    # Calculate total cooling effect from all boxes
+    total_cooling_effect = sum(box.cooling_effect for box in boxes)
+    
+    # Calculate box temperatures with enhanced cooling effects
+    box_temps = []
+    for i, box in enumerate(boxes):
+        # Base height factor
+        height_factor = 1.0 + (i * 0.15)
+        
+        # Base temperature with height consideration
+        box_temp = temp_adj * height_factor
+        
+        # Solar heating (stronger for upper boxes)
         if is_daytime:
-            params['ideal_hive_temperature'] += 1.0
-            params['bee_metabolic_heat'] *= 1.2
-            params['air_film_resistance_outside'] *= 0.9
-        else:
-            params['ideal_hive_temperature'] -= 0.5
-            params['bee_metabolic_heat'] *= 0.8
-            params['air_film_resistance_outside'] *= 1.2
+            solar_factor = 1.0 + (i * 0.1)
+            box_temp += solar_heat_gain * solar_factor * 0.1
+        
+        # Enhanced cooling effect calculation with CryoX consideration
+        adjusted_cooling = box.adjusted_cooling(environment_factors)
+        cooling_temp = (adjusted_cooling / 5.0) * MAX_COOLING_TEMP
+        
+        if box_temp > species.ideal_temp[1]:
+            temp_excess = box_temp - species.ideal_temp[1]
+            cooling_multiplier = 1.0 + (temp_excess / 10.0)
+            cooling_temp *= cooling_multiplier
+        
+        # Apply cooling effect
+        box_temp -= cooling_temp
+        
+        # Add propolis heating
+        propolis_heating = box.propolis_thickness * 0.06
+        box_temp += propolis_heating
+        
+        # Temperature bounds
+        max_temp = species.ideal_temp[1] + 3
+        box_temp = max(species.ideal_temp[0], min(max_temp, box_temp))
+        box_temps.append(box_temp)
 
-    if debug:
-        st.write("[DEBUG] Time-adjusted params:", params)
+    hive_temp = box_temps[-1]
+
+    # Calculate the average temperature reduction from cooling
+    avg_cooling = sum([(box.cooling_effect / 5.0) * MAX_COOLING_TEMP for box in boxes]) / len(boxes)
     
-    # When bypassing, skip further adjustments and use the ambient temperature directly.
-    if params.get("bypass_hive", False):
-        estimated_temp_c = ambient_temp_c
-    else:
-        if altitude_humidity > 70:
-            evaporative_cooling_factor = 1 - ((altitude_humidity - 70) / 100)
-            params['bee_metabolic_heat'] *= (1 + (1 - evaporative_cooling_factor) * 0.2)
-    
-        if rain_intensity > 0:
-            params['bee_metabolic_heat'] *= (1 + rain_intensity * 0.3)
-            params['air_film_resistance_outside'] *= (1 - rain_intensity * 0.2)
-    
-        if wind_speed > 0:
-            wind_factor = max(0.5, 1 - (wind_speed / 20))
-            params['air_film_resistance_outside'] *= wind_factor
-            params['bee_metabolic_heat'] *= (1 + (wind_speed / 20) * 0.4)
-    
-        calculated_colony_size = 2000 * (params['colony_size'] / 100)
-        colony_metabolic_heat = calculated_colony_size * params['bee_metabolic_heat'] * oxygen_factor
-    
-        total_volume = sum(
-            (3 * math.sqrt(3) / 2) * ((box.width / (100 * math.sqrt(3))) ** 2) * (box.height / 100)
-            for box in boxes
-        )
-        total_surface_area = sum(calculate_box_surface_area(box.width, box.height) for box in boxes)
-    
-        wood_resistance = (params['wood_thickness'] / 100) / params['wood_thermal_conductivity']
-        total_resistance = wood_resistance + params['air_film_resistance_outside']
-    
-        if adjusted_ambient_temp >= params['ideal_hive_temperature']:
-            cooling_effort = min(1.0, (adjusted_ambient_temp - params['ideal_hive_temperature']) / 10)
-            temp_decrease = (2.0 if is_daytime else 1.0) * cooling_effort
-            estimated_temp_c = max(params['ideal_hive_temperature'], adjusted_ambient_temp - temp_decrease)
-        else:
-            heat_contribution = min(
-                params['ideal_hive_temperature'] - adjusted_ambient_temp,
-                (colony_metabolic_heat * total_resistance) / total_surface_area
-            )
-            heat_contribution *= 0.9 if not is_daytime else 1.0
-            estimated_temp_c = adjusted_ambient_temp + heat_contribution
-    
-        estimated_temp_c = min(50, max(0, estimated_temp_c))
-    
-    if debug:
-        st.write(f"[DEBUG] Estimated hive base temperature: {estimated_temp_c}")
-    
-    if params.get("bypass_hive", False):
-        box_temperatures = [ambient_temp_c for _ in boxes]
-    else:
-        box_temperatures = [
-            max(0, min(50, estimated_temp_c - box.cooling_effect))
-            for box in boxes
-        ]
-    
-    if debug:
-        st.write("[DEBUG] Box temperatures:", box_temperatures)
-    
-    heat_transfer = (total_surface_area * abs(estimated_temp_c - adjusted_ambient_temp)) / total_resistance / 1000 if not params.get("bypass_hive", False) else 0
-    
+    # Apply cooling effect to base temperature
+    if hive_temp > species.ideal_temp[1]:
+        temp_excess = hive_temp - species.ideal_temp[1]
+        cooling_multiplier = 1.0 + (temp_excess / 10.0)
+        hive_temp -= (avg_cooling * cooling_multiplier)
+
     return {
-        'calculated_colony_size': calculated_colony_size if not params.get("bypass_hive", False) else 0,
-        'colony_metabolic_heat': (colony_metabolic_heat / 1000) if not params.get("bypass_hive", False) else 0,
-        'base_temperature': estimated_temp_c,
-        'box_temperatures': box_temperatures,
-        'total_volume': total_volume if not params.get("bypass_hive", False) else 0,
-        'total_surface_area': total_surface_area if not params.get("bypass_hive", False) else 0,
-        'thermal_resistance': total_resistance if not params.get("bypass_hive", False) else 0,
-        'ambient_temperature': adjusted_ambient_temp,
-        'oxygen_factor': oxygen_factor,
-        'altitude_humidity': altitude_humidity,
-        'heat_transfer': heat_transfer
+        "base_temp": hive_temp,
+        "box_temps": box_temps,
+        "metabolic_heat": metabolic_heat,
+        "solar_heat_gain": solar_heat_gain,
+        "thermal_resistance": total_resistance,
+        "heat_gain": heat_gain,
+        "cryox_performance": cryox_performance(**environment_factors)
     }
 
-# ========================
-# Visualization Functions
-# ========================
+def calculate_metabolic_heat(species: BeeSpecies, colony_size_pct: float, altitude: float) -> float:
+    """
+    Calculates the metabolic heat generated by the bee colony.
+    """
+    OXYGEN_ALTITUDE_SCALE = 7400
+    oxygen_factor = max(0.5, np.exp(-altitude / OXYGEN_ALTITUDE_SCALE))
+    colony_size = species.colony_size_factor * (colony_size_pct / 100.0)
+    base_metabolic = colony_size * species.metabolic_rate * oxygen_factor
+    ACTIVITY_MULTIPLIER = 2.5
+    return base_metabolic * ACTIVITY_MULTIPLIER
 
-def create_temperature_chart(box_temperatures: List[float]) -> None:
-    """Create a bar chart showing temperature distribution across hive boxes."""
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.bar([f'Box {i+1}' for i in range(len(box_temperatures))], box_temperatures, color='skyblue')
-    ax.set_ylabel('Temperature (°C)')
-    ax.set_title('Temperature Distribution Across Hive Boxes')
-    st.pyplot(fig)
+def adjust_temperature(ambient_temp: float, altitude: float, species: BeeSpecies, is_daytime: bool) -> float:
+    """
+    Adjusts the ambient temperature based on altitude, bee species, and daytime.
+    """
+    ALTITUDE_TEMP_DROP = 6.5 / 1000  # Temperature drop per meter of altitude
+    temp_adj = ambient_temp - (altitude * ALTITUDE_TEMP_DROP)
 
-def create_altitude_chart(altitude_range: np.ndarray, temperatures: List[float]) -> None:
-    """Plot hive temperature versus altitude."""
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.plot(altitude_range, temperatures, marker='o', linestyle='-')
-    ax.set_title("Hive Temperature vs. Altitude")
-    ax.set_xlabel("Altitude (m)")
-    ax.set_ylabel("Hive Temperature (°C)")
-    ax.grid(True)
-    st.pyplot(fig)
+    if species.activity_profile == "Diurnal":
+        temp_adj += 3 if is_daytime else -1
+    elif species.activity_profile == "Morning":
+        temp_adj += 4 if is_daytime else 0
+    else:
+        temp_adj += 2 if is_daytime else -0.5
+    return temp_adj
 
-# ========================
-# State Initialization and UI Components
-# ========================
+def calculate_solar_heat_gain(lat: float, lon: float, is_daytime: bool, day_of_year: int) -> float:
+    """
+    Estimates solar heat gain in Watts based on location, time of day, and day of year.
+    """
+    if not is_daytime:
+        return 0.0
 
-def initialize_state() -> None:
-    """Initialize the application state if not already set."""
-    if 'initialized' not in st.session_state:
-        st.session_state.initialized = True
-        st.session_state.boxes = [
-            Box(id=i+1, width=22, height=9, cooling_effect=ce)
-            for i, ce in enumerate([2, 0, 0, 8])
+    SOLAR_CONSTANT = 1367  # W/m^2
+    solar_angle = np.cos(np.radians(23.45 * np.sin(np.radians(360 * (day_of_year + 284) / 365))))
+    solar_radiation = SOLAR_CONSTANT * solar_angle * 0.7
+    HIVE_SURFACE_AREA = 0.25  # m^2
+    solar_heat_gain = solar_radiation * HIVE_SURFACE_AREA
+    return solar_heat_gain
+
+def create_hive_boxes(species):
+    """Creates and configures hive boxes with UI controls."""
+    if species.name == "Melipona":
+        default_boxes = [
+            HiveBox(1, 23, 6, 23, 1.0),
+            HiveBox(2, 23, 6, 23, 0.5),
+            HiveBox(3, 23, 6, 23, 2.0),
+            HiveBox(4, 23, 6, 23, 1.5)
         ]
-        st.session_state.saved_state = {}
-        st.session_state.realtime = False
-        st.session_state.alerts = []
-        st.session_state.notes = ""
-
-def render_sidebar() -> Dict[str, Any]:
-    """Render sidebar inputs and return the parameters."""
-    st.sidebar.title("🐝 Configuration")
-    
-    debug = st.sidebar.checkbox("Enable Debug Output", value=False)
-    
-    lapse_rate = st.sidebar.slider("Lapse Rate (°C per 1000m)", 0.0, 10.0, 6.5, step=0.1)
-    
-    params = {
-        'colony_size': st.sidebar.slider("Colony Size (%)", 0, 100, 50),
-        'wood_thickness': st.sidebar.slider("Wood Thickness (cm)", 1.0, 5.0, 2.0),
-        'wood_thermal_conductivity': st.sidebar.slider(
-            "Thermal Conductivity (W/(m⋅K))", 
-            0.1, 0.3, 0.13, 
-            step=0.01
-        ),
-        'air_film_resistance_outside': ThermalConfig.AIR_FILM_RESISTANCE_OUTSIDE,
-        'ideal_hive_temperature': ThermalConfig.IDEAL_HIVE_TEMPERATURE,
-        'bee_metabolic_heat': ThermalConfig.BEE_METABOLIC_HEAT,
-        'lapse_rate': lapse_rate
-    }
-    
-    st.sidebar.write("Current params:", params)
-    
-    # Default is False so that the ambient temperature remains as measured by GPS.
-    apply_altitude_correction = st.sidebar.checkbox(
-        "Apply altitude correction to ambient temp", value=False,
-        help="Disable if GPS temperature is already altitude-adjusted."
-    )
-    params['apply_altitude_correction'] = apply_altitude_correction
-    
-    bypass_hive = st.sidebar.checkbox(
-        "Bypass hive calculation adjustments", value=False,
-        help="If enabled, hive temperature will equal the GPS ambient temperature."
-    )
-    params['bypass_hive'] = bypass_hive
-    
-    return params, debug
-
-def render_box_controls() -> None:
-    """Render controls for modifying each hive box's parameters."""
-    st.subheader("📦 Box Configuration")
-    for i, box in enumerate(st.session_state.boxes):
-        with st.expander(f"Box {box.id}", expanded=True):
-            box.width = st.slider(f"Width for Box {box.id} (cm)", 10, 50, int(box.width))
-            box.height = st.slider(f"Height for Box {box.id} (cm)", 5, 20, int(box.height))
-            box.cooling_effect = st.number_input(
-                f"Cooling Effect for Box {box.id} (°C)", 
-                0.0, 20.0, 
-                float(box.cooling_effect), 
-                0.5, 
-                key=f"cooling_effect_{i}"
+    else:
+        default_boxes = [
+            HiveBox(1, 13, 5, 13, 1.0),
+            HiveBox(2, 13, 5, 13, 0.5),
+            HiveBox(3, 13, 5, 13, 2.0),
+            HiveBox(4, 13, 5, 13, 1.5),
+            HiveBox(5, 13, 5, 13, 1.0)
+        ]
+    boxes = []
+    for box in default_boxes:
+        cols = st.columns(5)  # Changed to 5 columns to include CryoX toggle
+        with cols[0]:
+            box.width = st.number_input(
+                f"Box {box.id} Width (cm)", 
+                min_value=10, 
+                max_value=50, 
+                value=int(box.width),
+                help="Width of the hive box in centimeters. Affects heat distribution and colony space."
             )
+        with cols[1]:
+            box.height = st.number_input(
+                f"Box {box.id} Height (cm)", 
+                min_value=5, 
+                max_value=30, 
+                value=int(box.height),
+                help="Height of the hive box in centimeters. Affects vertical heat distribution."
+            )
+        with cols[2]:
+            box.depth = st.number_input(
+                f"Box {box.id} Depth (cm)", 
+                min_value=10, 
+                max_value=50, 
+                value=int(box.depth),
+                help="Depth of the hive box in centimeters. Affects heat retention and colony space."
+            )
+        with cols[3]:
+            box.cooling_effect = st.number_input(
+                f"Box {box.id} Cooling Effect (0-5)", 
+                min_value=0.0, 
+                max_value=5.0,
+                value=min(box.cooling_effect, 5.0),
+                step=0.5,
+                help="Cooling capability of the box (0-5). Higher values mean more cooling (up to -8°C at maximum)."
+            )
+        with cols[4]:
+            box.pdrc_coating = st.checkbox(
+                f"CryoX Coating Box {box.id}",
+                value=False,
+                help="Enable CryoX coating for enhanced cooling performance based on environmental conditions."
+            )
+        boxes.append(box)
+    return boxes
 
-# ========================
-# Main Application
-# ========================
+def plot_box_temperatures(boxes: List[HiveBox], box_temps: List[float], species: BeeSpecies) -> go.Figure:
+    """
+    Creates a bar chart of box temperatures with clear visual indicators for ideal range
+    and temperature status.
+    """
+    labels = [f"Box {box.id}" for box in boxes]
+    
+    # Create color scale based on temperature ranges
+    colors = []
+    for temp in box_temps:
+        if temp < species.ideal_temp[0]:
+            colors.append('blue')  # Too cold
+        elif temp > species.ideal_temp[1]:
+            colors.append('red')   # Too hot
+        else:
+            colors.append('green') # Just right
+
+    # Create the bar chart
+    fig = go.Figure()
+    
+    # Add ideal temperature range as a rectangular shape
+    fig.add_shape(
+        type="rect",
+        x0=-0.5,
+        x1=len(boxes) - 0.5,
+        y0=species.ideal_temp[0],
+        y1=species.ideal_temp[1],
+        fillcolor="lightgreen",
+        opacity=0.2,
+        line=dict(width=0),
+        layer="below"
+    )
+
+    # Add temperature bars
+    fig.add_trace(go.Bar(
+        x=labels,
+        y=box_temps,
+        marker_color=colors,
+        text=[f"{temp:.1f}°C" for temp in box_temps],
+        textposition='auto',
+    ))
+
+    # Add horizontal lines for ideal temperature range
+    fig.add_shape(
+        type="line",
+        x0=-0.5,
+        x1=len(boxes) - 0.5,
+        y0=species.ideal_temp[0],
+        y1=species.ideal_temp[0],
+        line=dict(color="green", width=2, dash="dash"),
+    )
+    fig.add_shape(
+        type="line",
+        x0=-0.5,
+        x1=len(boxes) - 0.5,
+        y0=species.ideal_temp[1],
+        y1=species.ideal_temp[1],
+        line=dict(color="green", width=2, dash="dash"),
+    )
+
+    # Update layout with more detailed information
+    fig.update_layout(
+        title=dict(
+            text=f"Temperature Distribution in Hive Boxes<br>"
+                 f"<sup>Ideal range: {species.ideal_temp[0]}°C - {species.ideal_temp[1]}°C</sup>",
+            x=0.5
+        ),
+        xaxis_title="Box Position",
+        yaxis_title="Temperature (°C)",
+        yaxis=dict(
+            range=[
+                min(min(box_temps), species.ideal_temp[0]) - 1,
+                max(max(box_temps), species.ideal_temp[1]) + 1
+            ]
+        ),
+        showlegend=False
+    )
+
+    # Add annotations for temperature status
+    for i, temp in enumerate(box_temps):
+        status = "Too Cold" if temp < species.ideal_temp[0] else \
+                "Too Hot" if temp > species.ideal_temp[1] else \
+                "Ideal"
+        fig.add_annotation(
+            x=labels[i],
+            y=temp,
+            text=status,
+            yshift=20,
+            showarrow=False,
+            font=dict(size=10)
+        )
+
+    return fig
+
+def plot_hive_3d_structure(boxes: List[HiveBox], box_temps: List[float], species: BeeSpecies) -> go.Figure:
+    """
+    Creates a 3D visualization of the hive boxes with temperature mapping.
+    """
+    fig = go.Figure()
+    z_offset = 0
+    for i, (box, temp) in enumerate(zip(boxes, box_temps)):
+        x = [-box.width/2, box.width/2, box.width/2, -box.width/2]
+        y = [-box.depth/2, -box.depth/2, box.depth/2, box.depth/2]
+        z = [z_offset] * 4
+        fig.add_trace(go.Mesh3d(
+            x=x, y=y, z=z,
+            i=[0], j=[1], k=[2],
+            colorscale=[[0, 'blue'], [0.5, 'yellow'], [1, 'red']],
+            intensity=[temp],
+            name=f'Box {box.id}'
+        ))
+        z_top = [z_offset + box.height] * 4
+        fig.add_trace(go.Mesh3d(
+            x=x, y=y, z=z_top,
+            colorscale=[[0, 'blue'], [0.5, 'yellow'], [1, 'red']],
+            intensity=[temp],
+            showscale=False
+        ))
+        z_offset += box.height + 2
+    fig.update_layout(
+        title="3D Hive Structure with Temperature Distribution",
+        scene=dict(
+            xaxis_title="Width (cm)",
+            yaxis_title="Depth (cm)",
+            zaxis_title="Height (cm)",
+            camera=dict(eye=dict(x=1.5, y=1.5, z=1.5))
+        ),
+        showlegend=True
+    )
+    return fig
 
 def main():
-    """Main application entry point."""
-    initialize_state()
+    """Main application function."""
+    st.set_page_config(page_title="Stingless Bee Hive Thermal Simulator", layout="wide")
+    st.title("🍯 Stingless Bee Hive Thermal Simulator")
+
+    # Environmental conditions
+    st.sidebar.header("Environmental Conditions")
+    environment_factors = {
+        "cloud_cover": st.sidebar.slider("Cloud Cover (%)", 0, 100, 50) / 100,
+        "humidity": st.sidebar.slider("Humidity (%)", 0, 100, 50),
+        "wind_speed": st.sidebar.slider("Wind Speed (mph)", 0, 20, 5),
+        "temperature": st.sidebar.slider("Temperature (°F)", 50, 120, 85),
+        "solar_angle": st.sidebar.slider("Solar Angle (degrees)", 0, 90, 45),
+        "air_quality": st.sidebar.slider("Air Quality Index (0-1)", 0.0, 1.0, 0.5),
+        "uv_index": st.sidebar.slider("UV Index (0-11)", 0, 11, 5)
+    }
+
+    # Hive configuration
+    st.sidebar.header("Hive Configuration")
+    species_key = st.sidebar.selectbox(
+        "Select Bee Species", 
+        list(SPECIES_CONFIG.keys()),
+        help="Choose the stingless bee species. Each species has different temperature preferences and colony characteristics."
+    )
+    species = SPECIES_CONFIG[species_key]
     
-    st.set_page_config(
-        page_title="Hive Thermal Dashboard",
-        layout="wide",
-        initial_sidebar_state="expanded"
+    st.sidebar.markdown(f"**{species.name} Characteristics:**")
+    st.sidebar.write(f"Ideal Temperature: {species.ideal_temp[0]}–{species.ideal_temp[1]} °C")
+    st.sidebar.write(f"Humidity Range: {species.humidity_range[0]}–{species.humidity_range[1]} %")
+    st.sidebar.write(f"Activity Profile: {species.activity_profile}")
+
+    colony_size_pct = st.sidebar.slider(
+        "Colony Size (%)", 
+        0, 100, 50,
+        help="Percentage of maximum colony size. Larger colonies generate more heat and have better temperature regulation."
     )
     
-    st.title("🐝 Hive Thermal Dashboard")
-    st.markdown("---")
+    nest_thickness = st.sidebar.slider(
+        "Nest Wall Thickness (mm)", 
+        1.0, 10.0, 5.0,
+        help="Thickness of the nest walls. Thicker walls provide better insulation."
+    )
     
-    col1, col2 = st.columns([1, 1])
+    lid_thickness = st.sidebar.slider(
+        "Lid Thickness (mm)", 
+        1.0, 10.0, 5.0,
+        help="Thickness of the hive lid. Thicker lids help retain heat and provide better insulation."
+    )
+    
+    rain_intensity = st.sidebar.slider(
+        "Rain Intensity (0 to 1)", 
+        0.0, 1.0, 0.0, 
+        step=0.1,
+        help="Intensity of rainfall. Higher values mean more cooling effect on the hive."
+    )
+    
+    surface_area_exponent = st.sidebar.slider(
+        "Surface Area Exponent", 
+        1.0, 2.0, 1.0, 
+        step=0.1,
+        help="Affects how heat dissipates based on hive surface area. Higher values mean more heat loss through surfaces."
+    )
+
+    # CryoX comparison
+    st.subheader("CryoX Cooling Performance")
+    col1, col2 = st.columns(2)
     
     with col1:
-        params, debug = render_sidebar()
-        
-        gps_coordinates = st.text_input("Enter GPS Coordinates (lat, lon)", "4.6097, -74.0817")
-        try:
-            lat, lon = map(float, gps_coordinates.split(','))
-            ambient_temperature = get_temperature_from_coordinates(lat, lon)
-            if ambient_temperature is None:
-                ambient_temperature = 25.0
-            
-            # Retrieve altitude automatically
-            altitude = get_altitude_from_coordinates(lat, lon)
-            if altitude is None:
-                st.warning("Could not retrieve altitude automatically. Please use the slider below.")
-                altitude = st.slider("Simulated Altitude (meters)", 0, 3800, 0, 100)
-            else:
-                st.info(f"Retrieved altitude: {altitude:.1f} m")
-        except ValueError:
-            st.error("Please enter valid coordinates in the format 'lat, lon'")
-            ambient_temperature = 25.0
-            altitude = st.slider("Simulated Altitude (meters)", 0, 3800, 0, 100)
-        
-        st.subheader("🌍 Environmental Conditions")
-        is_daytime = st.radio("Time of Day", ['Day', 'Night'], index=0) == 'Day'
-        
-        col1a, col1b, col1c = st.columns(3)
-        with col1a:
-            humidity = st.slider("Relative Humidity (%)", 0, 100, 50,
-                                 help="Base humidity at current location")
-            altitude_humidity = calculate_relative_humidity_at_altitude(humidity, ambient_temperature, altitude)
-            st.info(f"Humidity at altitude: {altitude_humidity:.1f}%")
-        with col1b:
-            rain_intensity = st.slider("Rain Intensity", 0.0, 1.0, 0.0, 
-                                       help="0 = No rain, 1 = Heavy rain")
-        with col1c:
-            wind_speed = st.slider("Wind Speed (m/s)", 0.0, 20.0, 0.0,
-                                   help="Typical range: Light breeze (2-5), Strong wind (10-15)")
-        
-        st.write(f"Current Ambient Temperature: {ambient_temperature}°C")
-        
-        render_box_controls()
-        
+        st.write("### Cooling Effect Comparison")
+        # Create two sample hives for comparison
+        hive_no_cryox = HiveBox(id=1, width=30, height=40, depth=50, cooling_effect=1.0, pdrc_coating=False)
+        hive_with_cryox = HiveBox(id=2, width=30, height=40, depth=50, cooling_effect=1.0, pdrc_coating=True)
+
+        cooling_no_cryox = hive_no_cryox.adjusted_cooling(environment_factors)
+        cooling_with_cryox = hive_with_cryox.adjusted_cooling(environment_factors)
+
+        st.write(f"Cooling effect **without CryoX**: {cooling_no_cryox:.2f}")
+        st.write(f"Cooling effect **with CryoX**: {cooling_with_cryox:.2f}")
+        st.write(f"Performance improvement: **{((cooling_with_cryox/cooling_no_cryox - 1) * 100):.1f}%**")
+
     with col2:
-        results = calculate_hive_temperature(
-            params.copy(),  # Use a copy so the original params remain unchanged
-            st.session_state.boxes, 
-            ambient_temperature, 
-            is_daytime, 
-            altitude,
-            rain_intensity,
-            wind_speed,
-            humidity,
-            apply_altitude_temp_correction=params.get('apply_altitude_correction', False),
-            lapse_rate=params.get('lapse_rate', 6.5),
-            debug=debug
+        # Plotting the comparison
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=["Without CryoX", "With CryoX"], 
+            y=[cooling_no_cryox, cooling_with_cryox],
+            name="Cooling Effect",
+            marker_color=['lightblue', 'royalblue']
+        ))
+        fig.update_layout(
+            title="Comparison of Cooling Effect",
+            yaxis_title="Cooling Effect Factor",
+            showlegend=False,
+            height=300
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # Advanced Configuration
+    with st.expander("Advanced Hive Configuration"):
+        st.info("Configure detailed parameters for each hive box. These settings affect heat distribution and retention.")
+        boxes = create_hive_boxes(species)
+        gps_input = st.text_input(
+            "Enter GPS Coordinates (lat,lon)", 
+            "-3.4653,-62.2159",
+            help="Geographic coordinates of the hive location. Used to calculate solar exposure and day/night cycles."
         )
         
-        if debug and st.checkbox("Show Detailed Debug Info"):
-            st.write("[DEBUG] Calculation Results:", results)
+        gps = parse_gps_input(gps_input)
+        if gps is None:
+            st.error("Invalid GPS input. Please enter coordinates as 'lat,lon'.")
+            return
+            
+        lat, lon = gps
+        altitude = get_altitude(lat, lon)
+        if altitude is None:
+            st.warning("Could not retrieve altitude. Please enter altitude manually.")
+            altitude = st.slider(
+                "Altitude (m)", 
+                0, 5000, 100,
+                help="Height above sea level. Affects air temperature and density."
+            )
+        else:
+            st.write(f"Altitude: {altitude} m")
+            
+        is_daytime = is_daytime_calc(lat, lon)
+        st.write(f"It is daytime: {is_daytime}")
         
-        st.subheader("📊 Analysis Results")
-        col2a, col2b = st.columns(2)
-        with col2a:
-            st.metric("Base Hive Temperature", f"{results['base_temperature']:.1f}°C")
-            st.metric("Ambient Temperature", f"{results['ambient_temperature']:.1f}°C")
-        with col2b:
-            st.metric("Colony Size", f"{int(results['calculated_colony_size']):,} bees")
-            st.metric("Metabolic Heat", f"{results['colony_metabolic_heat']:.3f} kW")
+        weather = get_weather_data(lat, lon)
+        if weather and weather.get("temperature") is not None:
+            ambient_temp = weather["temperature"]
+            st.write(f"Current Ambient Temperature: {ambient_temp} °C")
+        else:
+            st.warning("Weather data unavailable. Please use the slider below.")
+            ambient_temp = st.slider(
+                "Ambient Temperature (°C)", 
+                15.0, 40.0, 28.0,
+                help="Outside air temperature. Major factor in hive temperature regulation."
+            )
+
+    if st.button("Run Simulation", help="Calculate hive temperatures based on current parameters and display results."):
+        # Add current timestamp to force update
+        st.session_state.simulation_time = datetime.datetime.now().timestamp()
         
-        st.subheader("📊 Box Temperatures")
-        for i, temp in enumerate(results['box_temperatures']):
-            st.markdown(f"**Box {i+1}:** {temp:.1f}°C")
-            st.progress(max(0.0, min(1.0, temp / 50)))
+        results = simulate_hive_temperature(
+            species=species,
+            colony_size_pct=colony_size_pct,
+            nest_thickness=nest_thickness,
+            lid_thickness=lid_thickness,
+            boxes=boxes,
+            ambient_temp=(weather["temperature"] - 32) * 5/9,  # Convert °F to °C
+            is_daytime=is_daytime,
+            altitude=altitude,
+            rain_intensity=rain_intensity,
+            surface_area_exponent=surface_area_exponent,
+            lat=lat,
+            lon=lon,
+            day_of_year=datetime.datetime.now().timetuple().tm_yday,
+            **environment_factors
+        )
         
-        st.subheader("📈 Temperature Distribution")
-        create_temperature_chart(results['box_temperatures'])
+        # Store results in session state
+        st.session_state.last_results = results
+
+    # Display results if they exist
+    if 'last_results' in st.session_state:
+        results = st.session_state.last_results
+        st.subheader("Simulation Results")
         
-        st.subheader("📈 Altitude Effect")
-        altitude_range = np.arange(0, 4000, 100)
-        altitude_temps = []
-        with st.spinner('Calculating altitude effects...'):
-            for alt in altitude_range:
-                alt_results = calculate_hive_temperature(
-                    params.copy(),
-                    st.session_state.boxes, 
-                    ambient_temperature, 
-                    is_daytime, 
-                    alt,
-                    rain_intensity,
-                    wind_speed,
-                    humidity,
-                    apply_altitude_temp_correction=params.get('apply_altitude_correction', False),
-                    lapse_rate=params.get('lapse_rate', 6.5),
-                    debug=False
-                )
-                altitude_temps.append(alt_results['base_temperature'])
-        create_altitude_chart(altitude_range, altitude_temps)
-        
-        st.metric("Total Hive Volume", f"{results['total_volume']:.2f} m³")
-        st.metric("Total Surface Area", f"{results['total_surface_area']:.2f} m²")
-        st.metric("Heat Transfer", f"{results['heat_transfer']:.3f} kW")
-    
-    if 'last_params' not in st.session_state or st.session_state.last_params != params:
-        st.session_state.last_params = params
-        st.experimental_rerun()
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(
+                "Base Hive Temperature", 
+                f"{results['base_temp']:.1f} °C",
+                help="The baseline temperature inside the hive before considering individual box variations."
+            )
+            st.metric(
+                "Metabolic Heat Output", 
+                f"{results['metabolic_heat']:.2f} W",
+                help="Heat generated by the bee colony through their metabolic activity."
+            )
+        with col2:
+            st.metric(
+                "Solar Heat Gain", 
+                f"{results['solar_heat_gain']:.2f} W",
+                help="Heat absorbed from sunlight exposure."
+            )
+        with col3:
+            st.write(
+                "Thermal Resistance:", 
+                f"{results['thermal_resistance']:.3f}",
+                help="The hive's ability to resist heat flow. Higher values mean better insulation."
+            )
+            st.write(
+                "Heat Gain:", 
+                f"{results['heat_gain']:.3f}",
+                help="Total heat accumulation in the hive from all sources."
+            )
+            
+        st.subheader("Temperature Status")
+        if results['base_temp'] < species.ideal_temp[0]:
+            st.error(f"⚠️ Alert: Hive is too cold! Current temperature ({results['base_temp']:.1f}°C) is below the ideal range ({species.ideal_temp[0]}-{species.ideal_temp[1]}°C).")
+        elif results['base_temp'] > species.ideal_temp[1]:
+            st.error(f"⚠️ Alert: Hive is too hot! Current temperature ({results['base_temp']:.1f}°C) is above the ideal range ({species.ideal_temp[0]}-{species.ideal_temp[1]}°C).")
+        else:
+            st.success(f"✅ Hive temperature ({results['base_temp']:.1f}°C) is within the ideal range ({species.ideal_temp[0]}-{species.ideal_temp[1]}°C).")
+            
+        # Force graph updates by adding simulation time to the key
+        st.plotly_chart(
+            plot_box_temperatures(boxes, results["box_temps"], species), 
+            use_container_width=True,
+            key=f"temp_plot_{st.session_state.get('simulation_time', 0)}",
+            help="Visual representation of temperature distribution across hive boxes."
+        )
+        st.plotly_chart(
+            plot_hive_3d_structure(boxes, results["box_temps"], species), 
+            use_container_width=True,
+            key=f"3d_plot_{st.session_state.get('simulation_time', 0)}",
+            help="3D visualization of the hive structure with temperature mapping."
+        )
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        st.error(f"An unexpected error occurred: {str(e)}")
-        st.write("Please check the input parameters or try refreshing the page.")
+    main()
+
