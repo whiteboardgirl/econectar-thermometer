@@ -350,7 +350,6 @@ def plot_hive_3d_structure(boxes: List[HiveBox], box_temps: List[float], species
     return fig
 
 def detailed_simulation(lat, lon):
-    """Perform detailed hive thermal simulation."""
     st.subheader("Detailed Hive Thermal Simulation")
     species_key = st.selectbox("Select Bee Species", list(SPECIES_CONFIG.keys()), key="detailed_species")
     species = SPECIES_CONFIG[species_key]
@@ -361,7 +360,7 @@ def detailed_simulation(lat, lon):
     surface_area_exponent = st.slider("Surface Area Exponent", 1.0, 2.0, 1.0, step=0.1, key="detailed_surface_area_exponent")
 
     with st.expander("Advanced Hive Configuration"):
-        boxes = create_hive_boxes(species)
+        boxes = create_hive_boxes(species)  # Generate boxes based on current UI state
         altitude = get_altitude(lat, lon)
         if altitude is None:
             altitude = st.slider("Altitude (m)", 0, 5000, 100, key="detailed_altitude")
@@ -373,12 +372,12 @@ def detailed_simulation(lat, lon):
         "cloud_cover": st.slider("Cloud Cover (%)", 0, 100, 50, key="detailed_cloud_cover") / 100,
         "humidity": st.slider("Humidity (%)", 0, 100, 50, key="detailed_humidity"),
         "wind_speed": st.slider("Wind Speed (mph)", 0, 20, 5, key="detailed_wind_speed"),
-        "temperature": ambient_temp,
         "solar_angle": st.slider("Solar Angle (degrees)", 0, 90, 45, key="detailed_solar_angle"),
         "air_quality": st.slider("Air Quality Index (0-1)", 0.0, 1.0, 0.5, key="detailed_air_quality"),
         "uv_index": st.slider("UV Index (0-11)", 0, 11, 5, key="detailed_uv_index")
     }
 
+    # Run simulation and store both results and boxes
     if st.button("Run Simulation", key="detailed_run_simulation"):
         results = simulate_hive_temperature(
             species=species,
@@ -397,13 +396,18 @@ def detailed_simulation(lat, lon):
             **environment_factors
         )
         st.session_state.last_results = results
+        st.session_state.last_boxes = boxes  # Store the boxes used in the simulation
 
-    if 'last_results' in st.session_state:
+    # Display results using stored boxes
+    if 'last_results' in st.session_state and 'last_boxes' in st.session_state:
         results = st.session_state.last_results
+        boxes = st.session_state.last_boxes  # Use the boxes from the simulation run
         st.subheader("Simulation Results")
         st.metric("Base Hive Temperature", f"{results['base_temp']:.1f} °C")
         st.plotly_chart(plot_box_temperatures(boxes, results["box_temps"], species), use_container_width=True)
         st.plotly_chart(plot_hive_3d_structure(boxes, results["box_temps"], species), use_container_width=True)
+    else:
+        st.write("Please run the simulation to see results.")
 
 # Main function
 def main():
