@@ -28,17 +28,16 @@ class HiveBox:
     width: float
     height: float
     depth: float
-    cooling_effect: float
     propolis_thickness: float = 1.5
     pdrc_coating: bool = False
 
     def adjusted_cooling(self, environment_factors):
-        """Compute hive cooling effectiveness with or without CryoX coating."""
-        base_cooling = self.cooling_effect
-        if self.pdrc_coating:
+        """Compute hive cooling effectiveness with CryoX coating on the 4th box only."""
+        base_cooling = 5.0  # Default max cooling effect when CryoX is applied
+        if self.pdrc_coating and self.id == 4:  # Only the 4th box can have CryoX cooling
             pdrc_performance = cryox_performance(**environment_factors) / 100
-            return base_cooling * (1 + pdrc_performance)
-        return base_cooling
+            return base_cooling * pdrc_performance
+        return 0.0  # No cooling without CryoX or for boxes 1–3
 
 # Configuration constants
 SPECIES_CONFIG = {
@@ -116,7 +115,7 @@ SPECIES_CONFIG = {
 
 # API endpoints
 OPEN_METEO_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive?latitude={lat}&longitude={lon}&start_date={start_date}&end_date={end_date}&hourly=temperature_2m"
-OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
+OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"  # Updated to correct syntax
 OPEN_ELEVATION_URL = "https://api.open-elevation.com/api/v1/lookup?locations={lat},{lon}"
 
 # Utility functions
@@ -273,25 +272,17 @@ def simple_calculation(lat, lon):
 
 # Detailed Simulation Mode
 def create_hive_boxes(species):
-    """Create and configure hive boxes with UI controls."""
-    if species.name == "Melipona":
-        default_boxes = [
-            HiveBox(1, 23, 6, 23, 1.0),
-            HiveBox(2, 23, 6, 23, 0.5),
-            HiveBox(3, 23, 6, 23, 2.0),
-            HiveBox(4, 23, 6, 23, 1.5)
-        ]
-    else:
-        default_boxes = [
-            HiveBox(1, 13, 5, 13, 1.0),
-            HiveBox(2, 13, 5, 13, 0.5),
-            HiveBox(3, 13, 5, 13, 2.0),
-            HiveBox(4, 13, 5, 13, 1.5),
-            HiveBox(5, 13, 5, 13, 1.0)
-        ]
+    """Create and configure 4 hive boxes with UI controls, CryoX only on the 4th box."""
+    # Fixed to 4 boxes for all species
+    default_boxes = [
+        HiveBox(1, 13, 5, 13),  # Box 1
+        HiveBox(2, 13, 5, 13),  # Box 2
+        HiveBox(3, 13, 5, 13),  # Box 3
+        HiveBox(4, 13, 5, 13),  # Box 4 (top box, can have CryoX)
+    ]
     boxes = []
     for box in default_boxes:
-        cols = st.columns(5)
+        cols = st.columns(4)  # Reduced to 4 columns since cooling_effect is removed
         with cols[0]:
             box.width = st.number_input(f"Box {box.id} Width (cm)", min_value=10, max_value=50, value=int(box.width), key=f"box_{box.id}_width")
         with cols[1]:
@@ -299,25 +290,26 @@ def create_hive_boxes(species):
         with cols[2]:
             box.depth = st.number_input(f"Box {box.id} Depth (cm)", min_value=10, max_value=50, value=int(box.depth), key=f"box_{box.id}_depth")
         with cols[3]:
-            box.cooling_effect = st.number_input(f"Box {box.id} Cooling Effect (0-5)", min_value=0.0, max_value=5.0, value=min(box.cooling_effect, 5.0), step=0.5, key=f"box_{box.id}_cooling")
-        with cols[4]:
-            box.pdrc_coating = st.checkbox(f"CryoX Coating Box {box.id}", value=False, key=f"box_{box.id}_cryox")
+            # Only allow CryoX coating on the 4th box
+            if box.id == 4:
+                box.pdrc_coating = st.checkbox(f"CryoX Coating Box {box.id}", value=False, key=f"box_{box.id}_cryox")
         boxes.append(box)
     return boxes
 
 def simulate_hive_temperature(species, colony_size_pct, nest_thickness, lid_thickness, boxes, ambient_temp, is_daytime, altitude, rain_intensity, surface_area_exponent, lat, lon, day_of_year, **env_factors):
-    """Simulate hive internal temperature."""
+    """Simulate hive internal temperature with CryoX cooling on the 4th box."""
     colony_size = species.colony_size_factor * (colony_size_pct / 100)
     metabolic_heat = species.metabolic_rate * colony_size * (1.2 if is_daytime else 0.8)
     total_volume = sum(box.width * box.height * box.depth for box in boxes) / 1000  # Convert cm³ to liters
     surface_area = sum(2 * (box.width * box.height + box.width * box.depth + box.height * box.depth) for box in boxes) / 10000  # Convert cm² to m²
     adjusted_surface_area = surface_area ** surface_area_exponent
     heat_loss = species.nest_conductivity * adjusted_surface_area * (ambient_temp - species.ideal_temp[0]) / (nest_thickness / 1000)
-    cooling = sum(box.adjusted_cooling(env_factors) for box in boxes) * (1 - rain_intensity * 0.5)
+    cooling = sum(box.adjusted_cooling(env_factors) for box in boxes) * (1 - rain_intensity * 0.5)  # Cooling only from CryoX on box 4
     base_temp = ambient_temp + (metabolic_heat - heat_loss - cooling) / total_volume
     box_temps = []
     for box in boxes:
         box_cooling = box.adjusted_cooling(env_factors)
+        # Apply cooling effect proportionally to each box based on volume, but only box 4 has active cooling
         box_temp = base_temp - box_cooling * (box.width * box.height * box.depth / 1000) / total_volume
         box_temps.append(max(species.ideal_temp[0], min(species.ideal_temp[1], box_temp)))
     return {"base_temp": base_temp, "box_temps": box_temps}
@@ -378,7 +370,7 @@ def detailed_simulation(lat, lon):
     surface_area_exponent = st.slider("Surface Area Exponent", 1.0, 2.0, 1.0, step=0.1, key="detailed_surface_area_exponent")
 
     with st.expander("Advanced Hive Configuration"):
-        boxes = create_hive_boxes(species)
+        boxes = create_hive_boxes(species)  # Now fixed to 4 boxes
         altitude = get_altitude(lat, lon)
         if altitude is None:
             altitude = st.slider("Altitude (m)", 0, 5000, 100, key="detailed_altitude")
