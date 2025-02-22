@@ -9,6 +9,7 @@ import pytz
 from timezonefinder import TimezoneFinder
 from dataclasses import dataclass
 from typing import List, Tuple, Dict
+import io
 
 # Data classes
 @dataclass
@@ -115,7 +116,7 @@ SPECIES_CONFIG = {
 
 # API endpoints
 OPEN_METEO_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive?latitude={lat}&longitude={lon}&start_date={start_date}&end_date={end_date}&hourly=temperature_2m"
-OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"  # Updated to correct syntax
+OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
 OPEN_ELEVATION_URL = "https://api.open-elevation.com/api/v1/lookup?locations={lat},{lon}"
 
 # Utility functions
@@ -223,8 +224,7 @@ def simple_calculation(lat, lon):
     delta_T_roof = st.slider("Roof Temperature Reduction (°C)", 0.0, 10.0, 8.5, step=0.5, help="Cooling from hive roof.", key="simple_delta_T_roof")
     hive_volume = st.number_input("Hive Internal Volume (liters)", 0.5, 5.0, 2.0, step=0.1, help="Hive volume in liters.", key="simple_hive_volume")
 
-    # Define generic ideal temperature range for stingless bees
-    IDEAL_TEMP_RANGE = (30.0, 36.0)  # Typical range for stingless bees
+    IDEAL_TEMP_RANGE = (30.0, 36.0)  # Generic ideal range for stingless bees
 
     if st.button("Calculate", key="simple_calculate"):
         weather_df = get_historical_weather_data(lat, lon, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
@@ -238,7 +238,6 @@ def simple_calculation(lat, lon):
             st.write("#### Weather Data and Calculated Internal Temperature")
             st.dataframe(weather_df.style.format({"temperature": "{:.2f}", "internal_temperature": "{:.2f}"}))
 
-            # Plot temperatures
             st.write("#### Temperature Over Time")
             plt.figure(figsize=(10, 5))
             plt.plot(weather_df['time'], weather_df['temperature'], label='External Temperature', color='red')
@@ -252,7 +251,6 @@ def simple_calculation(lat, lon):
             plt.grid(True)
             st.pyplot(plt)
 
-            # Summary statistics
             avg_external = weather_df['temperature'].mean()
             avg_internal = weather_df['internal_temperature'].mean()
             st.write(f"**Average External Temperature:** {avg_external:.2f} °C")
@@ -260,7 +258,6 @@ def simple_calculation(lat, lon):
             st.write(f"**Average Temperature Reduction:** {avg_external - avg_internal:.2f} °C")
             st.write(f"**Adjusted k (based on hive volume):** {adjusted_k:.2f}")
 
-            # Temperature alert
             if avg_internal < IDEAL_TEMP_RANGE[0]:
                 st.error(f"⚠️ Hive is too cold! Average internal temperature ({avg_internal:.2f}°C) is below the ideal range ({IDEAL_TEMP_RANGE[0]}–{IDEAL_TEMP_RANGE[1]}°C).")
             elif avg_internal > IDEAL_TEMP_RANGE[1]:
@@ -273,16 +270,15 @@ def simple_calculation(lat, lon):
 # Detailed Simulation Mode
 def create_hive_boxes(species):
     """Create and configure 4 hive boxes with UI controls, CryoX only on the 4th box."""
-    # Fixed to 4 boxes for all species
     default_boxes = [
-        HiveBox(1, 13, 5, 13),  # Box 1
-        HiveBox(2, 13, 5, 13),  # Box 2
-        HiveBox(3, 13, 5, 13),  # Box 3
-        HiveBox(4, 13, 5, 13),  # Box 4 (top box, can have CryoX)
+        HiveBox(1, 13, 5, 13),
+        HiveBox(2, 13, 5, 13),
+        HiveBox(3, 13, 5, 13),
+        HiveBox(4, 13, 5, 13),
     ]
     boxes = []
     for box in default_boxes:
-        cols = st.columns(4)  # Reduced to 4 columns since cooling_effect is removed
+        cols = st.columns(4)
         with cols[0]:
             box.width = st.number_input(f"Box {box.id} Width (cm)", min_value=10, max_value=50, value=int(box.width), key=f"box_{box.id}_width")
         with cols[1]:
@@ -290,7 +286,6 @@ def create_hive_boxes(species):
         with cols[2]:
             box.depth = st.number_input(f"Box {box.id} Depth (cm)", min_value=10, max_value=50, value=int(box.depth), key=f"box_{box.id}_depth")
         with cols[3]:
-            # Only allow CryoX coating on the 4th box
             if box.id == 4:
                 box.pdrc_coating = st.checkbox(f"CryoX Coating Box {box.id}", value=False, key=f"box_{box.id}_cryox")
         boxes.append(box)
@@ -304,12 +299,11 @@ def simulate_hive_temperature(species, colony_size_pct, nest_thickness, lid_thic
     surface_area = sum(2 * (box.width * box.height + box.width * box.depth + box.height * box.depth) for box in boxes) / 10000  # Convert cm² to m²
     adjusted_surface_area = surface_area ** surface_area_exponent
     heat_loss = species.nest_conductivity * adjusted_surface_area * (ambient_temp - species.ideal_temp[0]) / (nest_thickness / 1000)
-    cooling = sum(box.adjusted_cooling(env_factors) for box in boxes) * (1 - rain_intensity * 0.5)  # Cooling only from CryoX on box 4
+    cooling = sum(box.adjusted_cooling(env_factors) for box in boxes) * (1 - rain_intensity * 0.5)
     base_temp = ambient_temp + (metabolic_heat - heat_loss - cooling) / total_volume
     box_temps = []
     for box in boxes:
         box_cooling = box.adjusted_cooling(env_factors)
-        # Apply cooling effect proportionally to each box based on volume, but only box 4 has active cooling
         box_temp = base_temp - box_cooling * (box.width * box.height * box.depth / 1000) / total_volume
         box_temps.append(max(species.ideal_temp[0], min(species.ideal_temp[1], box_temp)))
     return {"base_temp": base_temp, "box_temps": box_temps}
@@ -334,33 +328,50 @@ def plot_box_temperatures(boxes: List[HiveBox], box_temps: List[float], species:
     return fig
 
 def plot_hive_3d_structure(boxes: List[HiveBox], box_temps: List[float], species: BeeSpecies):
-    """Plot 3D hive structure with temperature coloring."""
-    x, y, z = [], [], []
-    colors = []
-    for i, box in enumerate(boxes):
-        x.extend([0, box.width, box.width, 0, 0])
-        y.extend([0, 0, box.depth, box.depth, 0])
-        z.extend([i * box.height, i * box.height, i * box.height, i * box.height, i * box.height])
-        colors.append(box_temps[i])
-    fig = go.Figure(data=[go.Scatter3d(
-        x=x, y=y, z=z,
-        mode='lines+markers',
-        line=dict(color=colors, colorscale='Viridis', width=5),
-        marker=dict(size=5, color=colors, colorscale='Viridis', showscale=True)
-    )])
+    """Plot 3D hive structure with temperature coloring using filled boxes."""
+    fig = go.Figure()
+    z_offset = 0
+
+    for i, (box, temp) in enumerate(zip(boxes, box_temps)):
+        x = [0, box.width, box.width, 0, 0, box.width, box.width, 0]
+        y = [0, 0, box.depth, box.depth, 0, 0, box.depth, box.depth]
+        z = [z_offset, z_offset, z_offset, z_offset, z_offset + box.height, z_offset + box.height, z_offset + box.height, z_offset + box.height]
+        i_faces = [0, 0, 4, 4, 0, 1, 5, 2, 6, 3, 7, 4]
+        j_faces = [1, 4, 5, 0, 3, 2, 6, 3, 7, 7, 6, 5]
+        k_faces = [4, 5, 1, 1, 7, 5, 2, 6, 3, 2, 5, 6]
+
+        fig.add_trace(go.Mesh3d(
+            x=x,
+            y=y,
+            z=z,
+            i=i_faces,
+            j=j_faces,
+            k=k_faces,
+            intensity=[temp] * 8,
+            colorscale='Viridis',
+            colorbar_title="Temperature (°C)",
+            name=f"Box {box.id}",
+            opacity=0.8
+        ))
+        z_offset += box.height
+
     fig.update_layout(
         title="3D Hive Structure with Temperature Gradient",
         scene=dict(
             xaxis_title="Width (cm)",
             yaxis_title="Depth (cm)",
-            zaxis_title="Height (cm)"
-        )
+            zaxis_title="Height (cm)",
+            camera=dict(eye=dict(x=1.5, y=1.5, z=1.5))
+        ),
+        showlegend=True
     )
     return fig
 
 def detailed_simulation(lat, lon):
-    """Perform detailed hive thermal simulation with temperature alerts."""
+    """Perform detailed hive thermal simulation with enhancements."""
     st.subheader("Detailed Hive Thermal Simulation")
+    st.write("Configure the hive and environment to simulate temperatures. CryoX coating on Box 4 (top) can reduce temperatures up to 5°C based on conditions.")
+    
     species_key = st.selectbox("Select Bee Species", list(SPECIES_CONFIG.keys()), key="detailed_species")
     species = SPECIES_CONFIG[species_key]
     colony_size_pct = st.slider("Colony Size (%)", 0, 100, 50, key="detailed_colony_size")
@@ -370,7 +381,7 @@ def detailed_simulation(lat, lon):
     surface_area_exponent = st.slider("Surface Area Exponent", 1.0, 2.0, 1.0, step=0.1, key="detailed_surface_area_exponent")
 
     with st.expander("Advanced Hive Configuration"):
-        boxes = create_hive_boxes(species)  # Now fixed to 4 boxes
+        boxes = create_hive_boxes(species)
         altitude = get_altitude(lat, lon)
         if altitude is None:
             altitude = st.slider("Altitude (m)", 0, 5000, 100, key="detailed_altitude")
@@ -406,7 +417,7 @@ def detailed_simulation(lat, lon):
             **environment_factors
         )
         st.session_state.last_results = results
-        st.session_state.last_boxes = boxes  # Store boxes for plotting consistency
+        st.session_state.last_boxes = boxes
 
     if 'last_results' in st.session_state and 'last_boxes' in st.session_state:
         results = st.session_state.last_results
@@ -422,9 +433,41 @@ def detailed_simulation(lat, lon):
         else:
             st.success(f"✅ Hive temperature ({results['base_temp']:.1f}°C) is within the ideal range ({species.ideal_temp[0]}–{species.ideal_temp[1]}°C) for {species.name}.")
 
+        # Temperature Gradient Analysis
+        st.write("#### Temperature Gradient Across Boxes")
+        box_temps = results["box_temps"]
+        temp_diff = box_temps[0] - box_temps[3]  # Difference between bottom (Box 1) and top (Box 4)
+        st.write(f"**Temperature Difference (Box 1 to Box 4):** {temp_diff:.2f} °C")
+        if boxes[3].pdrc_coating:
+            st.info(f"CryoX cooling on Box 4 reduced the top temperature by up to {boxes[3].adjusted_cooling(environment_factors):.2f}°C.")
+
         # Visualizations
-        st.plotly_chart(plot_box_temperatures(boxes, results["box_temps"], species), use_container_width=True)
-        st.plotly_chart(plot_hive_3d_structure(boxes, results["box_temps"], species), use_container_width=True)
+        st.plotly_chart(plot_box_temperatures(boxes, box_temps, species), use_container_width=True)
+        st.plotly_chart(plot_hive_3d_structure(boxes, box_temps, species), use_container_width=True)
+
+        # Export Results
+        st.write("#### Export Results")
+        df_export = pd.DataFrame({
+            "Box": [f"Box {box.id}" for box in boxes],
+            "Temperature (°C)": box_temps,
+            "CryoX Coating": [box.pdrc_coating for box in boxes]
+        })
+        csv_buffer = io.StringIO()
+        df_export.to_csv(csv_buffer, index=False)
+        st.download_button(
+            label="Download Results as CSV",
+            data=csv_buffer.getvalue(),
+            file_name=f"hive_temps_{species.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv"
+        )
+
+        # User Guidance
+        st.write("#### Tips for Hive Optimization")
+        st.markdown("""
+        - **CryoX Effect**: Enabling CryoX on Box 4 (roof) can lower temperatures, especially in hot climates. Adjust box dimensions to maximize volume if more cooling is needed.
+        - **Nest Thickness**: Increase nest thickness to reduce heat loss in cooler environments.
+        - **Colony Size**: Larger colonies generate more heat; balance this with cooling needs.
+        """)
     else:
         st.write("Please run the simulation to see results.")
 
