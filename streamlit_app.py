@@ -216,13 +216,16 @@ def adjust_k_for_volume(base_k, actual_volume, standard_volume=2.0):
     return min(max(adjusted_k, 0.0), 1.0)
 
 def simple_calculation(lat, lon):
-    """Perform simple hive temperature calculation."""
+    """Perform simple hive temperature calculation with temperature alerts."""
     st.subheader("Simple Hive Temperature Calculation")
     start_date = st.date_input("Start Date", value=date(2023, 1, 1), help="Select start date for weather data.", key="simple_start_date")
     end_date = st.date_input("End Date", value=date(2023, 1, 31), help="Select end date for weather data.", key="simple_end_date")
     base_k = st.slider("Base Thermal Transfer Factor (k)", 0.0, 1.0, 0.5, step=0.1, help="Base factor for cooling effect.", key="simple_base_k")
     delta_T_roof = st.slider("Roof Temperature Reduction (°C)", 0.0, 10.0, 8.5, step=0.5, help="Cooling from hive roof.", key="simple_delta_T_roof")
     hive_volume = st.number_input("Hive Internal Volume (liters)", 0.5, 5.0, 2.0, step=0.1, help="Hive volume in liters.", key="simple_hive_volume")
+
+    # Define generic ideal temperature range for stingless bees
+    IDEAL_TEMP_RANGE = (30.0, 36.0)  # Typical range for stingless bees
 
     if st.button("Calculate", key="simple_calculate"):
         weather_df = get_historical_weather_data(lat, lon, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
@@ -235,22 +238,36 @@ def simple_calculation(lat, lon):
             weather_df['internal_temperature'] = weather_df['temperature'] - adjusted_k * delta_T_roof
             st.write("#### Weather Data and Calculated Internal Temperature")
             st.dataframe(weather_df.style.format({"temperature": "{:.2f}", "internal_temperature": "{:.2f}"}))
+
+            # Plot temperatures
             st.write("#### Temperature Over Time")
             plt.figure(figsize=(10, 5))
             plt.plot(weather_df['time'], weather_df['temperature'], label='External Temperature', color='red')
             plt.plot(weather_df['time'], weather_df['internal_temperature'], label='Internal Temperature', color='blue')
+            plt.axhline(y=IDEAL_TEMP_RANGE[0], color='green', linestyle='--', label='Min Ideal Temp')
+            plt.axhline(y=IDEAL_TEMP_RANGE[1], color='green', linestyle='--', label='Max Ideal Temp')
             plt.xlabel('Time')
             plt.ylabel('Temperature (°C)')
             plt.title('External vs. Internal Hive Temperature')
             plt.legend()
             plt.grid(True)
             st.pyplot(plt)
+
+            # Summary statistics
             avg_external = weather_df['temperature'].mean()
             avg_internal = weather_df['internal_temperature'].mean()
             st.write(f"**Average External Temperature:** {avg_external:.2f} °C")
             st.write(f"**Average Internal Temperature:** {avg_internal:.2f} °C")
             st.write(f"**Average Temperature Reduction:** {avg_external - avg_internal:.2f} °C")
             st.write(f"**Adjusted k (based on hive volume):** {adjusted_k:.2f}")
+
+            # Temperature alert
+            if avg_internal < IDEAL_TEMP_RANGE[0]:
+                st.error(f"⚠️ Hive is too cold! Average internal temperature ({avg_internal:.2f}°C) is below the ideal range ({IDEAL_TEMP_RANGE[0]}–{IDEAL_TEMP_RANGE[1]}°C).")
+            elif avg_internal > IDEAL_TEMP_RANGE[1]:
+                st.error(f"⚠️ Hive is too hot! Average internal temperature ({avg_internal:.2f}°C) is above the ideal range ({IDEAL_TEMP_RANGE[0]}–{IDEAL_TEMP_RANGE[1]}°C).")
+            else:
+                st.success(f"✅ Hive temperature ({avg_internal:.2f}°C) is within the ideal range ({IDEAL_TEMP_RANGE[0]}–{IDEAL_TEMP_RANGE[1]}°C).")
         else:
             st.write("No data available. Please check your inputs and try again.")
 
@@ -350,6 +367,7 @@ def plot_hive_3d_structure(boxes: List[HiveBox], box_temps: List[float], species
     return fig
 
 def detailed_simulation(lat, lon):
+    """Perform detailed hive thermal simulation with temperature alerts."""
     st.subheader("Detailed Hive Thermal Simulation")
     species_key = st.selectbox("Select Bee Species", list(SPECIES_CONFIG.keys()), key="detailed_species")
     species = SPECIES_CONFIG[species_key]
@@ -360,7 +378,7 @@ def detailed_simulation(lat, lon):
     surface_area_exponent = st.slider("Surface Area Exponent", 1.0, 2.0, 1.0, step=0.1, key="detailed_surface_area_exponent")
 
     with st.expander("Advanced Hive Configuration"):
-        boxes = create_hive_boxes(species)  # Generate boxes based on current UI state
+        boxes = create_hive_boxes(species)
         altitude = get_altitude(lat, lon)
         if altitude is None:
             altitude = st.slider("Altitude (m)", 0, 5000, 100, key="detailed_altitude")
@@ -372,12 +390,12 @@ def detailed_simulation(lat, lon):
         "cloud_cover": st.slider("Cloud Cover (%)", 0, 100, 50, key="detailed_cloud_cover") / 100,
         "humidity": st.slider("Humidity (%)", 0, 100, 50, key="detailed_humidity"),
         "wind_speed": st.slider("Wind Speed (mph)", 0, 20, 5, key="detailed_wind_speed"),
+        "temperature": ambient_temp,
         "solar_angle": st.slider("Solar Angle (degrees)", 0, 90, 45, key="detailed_solar_angle"),
         "air_quality": st.slider("Air Quality Index (0-1)", 0.0, 1.0, 0.5, key="detailed_air_quality"),
         "uv_index": st.slider("UV Index (0-11)", 0, 11, 5, key="detailed_uv_index")
     }
 
-    # Run simulation and store both results and boxes
     if st.button("Run Simulation", key="detailed_run_simulation"):
         results = simulate_hive_temperature(
             species=species,
@@ -396,14 +414,23 @@ def detailed_simulation(lat, lon):
             **environment_factors
         )
         st.session_state.last_results = results
-        st.session_state.last_boxes = boxes  # Store the boxes used in the simulation
+        st.session_state.last_boxes = boxes  # Store boxes for plotting consistency
 
-    # Display results using stored boxes
     if 'last_results' in st.session_state and 'last_boxes' in st.session_state:
         results = st.session_state.last_results
-        boxes = st.session_state.last_boxes  # Use the boxes from the simulation run
+        boxes = st.session_state.last_boxes
         st.subheader("Simulation Results")
         st.metric("Base Hive Temperature", f"{results['base_temp']:.1f} °C")
+
+        # Temperature alert
+        if results['base_temp'] < species.ideal_temp[0]:
+            st.error(f"⚠️ Hive is too cold! Base temperature ({results['base_temp']:.1f}°C) is below the ideal range ({species.ideal_temp[0]}–{species.ideal_temp[1]}°C) for {species.name}.")
+        elif results['base_temp'] > species.ideal_temp[1]:
+            st.error(f"⚠️ Hive is too hot! Base temperature ({results['base_temp']:.1f}°C) is above the ideal range ({species.ideal_temp[0]}–{species.ideal_temp[1]}°C) for {species.name}.")
+        else:
+            st.success(f"✅ Hive temperature ({results['base_temp']:.1f}°C) is within the ideal range ({species.ideal_temp[0]}–{species.ideal_temp[1]}°C) for {species.name}.")
+
+        # Visualizations
         st.plotly_chart(plot_box_temperatures(boxes, results["box_temps"], species), use_container_width=True)
         st.plotly_chart(plot_hive_3d_structure(boxes, results["box_temps"], species), use_container_width=True)
     else:
