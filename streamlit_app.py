@@ -1,5 +1,6 @@
 import streamlit as st
-import requests
+import cdsapi
+import xarray as xr
 import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import date, datetime
@@ -10,6 +11,7 @@ from timezonefinder import TimezoneFinder
 from dataclasses import dataclass
 from typing import List, Tuple, Dict
 import io
+import os
 
 # Data classes
 @dataclass
@@ -114,11 +116,6 @@ SPECIES_CONFIG = {
     )
 }
 
-# API endpoints
-OPEN_METEO_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive?latitude={lat}&longitude={lon}&start_date={start_date}&end_date={end_date}&hourly=temperature_2m"
-OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
-OPEN_ELEVATION_URL = "https://api.open-elevation.com/api/v1/lookup?locations={lat},{lon}"
-
 # Utility functions
 def parse_gps_input(gps_str: str) -> Tuple[float, float] | None:
     """Parse GPS coordinates from string input."""
@@ -130,67 +127,51 @@ def parse_gps_input(gps_str: str) -> Tuple[float, float] | None:
 
 @st.cache_data
 def get_historical_weather_data(lat: float, lon: float, start_date: str, end_date: str):
-    """Fetch historical hourly temperature data from Open-Meteo API."""
-    url = OPEN_METEO_ARCHIVE_URL.format(lat=lat, lon=lon, start_date=start_date, end_date=end_date)
+    """Fetch historical hourly temperature data from Copernicus CDS API (ERA5)."""
     try:
-        response = requests.get(url)
-        response.raise_for_status()
-        data = response.json()
-        times = data['hourly']['time']
-        temperatures = data['hourly']['temperature_2m']
-        df = pd.DataFrame({'time': times, 'temperature': temperatures})
+        # Initialize CDS API client with API key from secrets
+        c = cdsapi.Client(url="https://cds.climate.copernicus.eu/api/v2", key=st.secrets["CDS_API_KEY"])
+
+        # Define the request parameters for ERA5 hourly data
+        request = {
+            'product_type': 'reanalysis',
+            'format': 'netcdf',
+            'variable': '2m_temperature',  # Temperature at 2m height
+            'year': [str(year) for year in range(int(start_date[:4]), int(end_date[:4]) + 1)],
+            'month': [f'{month:02d}' for month in range(1, 13)],
+            'day': [f'{day:02d}' for day in range(1, 32)],
+            'time': [f'{hour:02d}:00' for hour in range(0, 24)],
+            'area': [lat + 0.1, lon - 0.1, lat - 0.1, lon + 0.1],  # Small bounding box around lat/lon
+        }
+
+        # Temporary file to store the downloaded NetCDF
+        output_file = f"era5_temp_{lat}_{lon}_{start_date}_{end_date}.nc"
+        
+        # Download data if not already cached
+        if not os.path.exists(output_file):
+            c.retrieve('reanalysis-era5-single-levels', request, output_file)
+
+        # Load the NetCDF file using xarray
+        ds = xr.open_dataset(output_file)
+        
+        # Extract temperature (convert from Kelvin to Celsius)
+        temp = ds['t2m'].sel(latitude=lat, longitude=lon, method='nearest') - 273.15
+        
+        # Convert to pandas DataFrame
+        df = temp.to_dataframe(name='temperature').reset_index()
         df['time'] = pd.to_datetime(df['time'])
+        
+        # Filter by date range
+        df = df[(df['time'] >= start_date) & (df['time'] <= end_date)]
+        
+        # Clean up unnecessary columns
+        df = df[['time', 'temperature']]
+        
         return df
-    except requests.RequestException as e:
-        st.error(f"Failed to fetch historical weather data: {e}")
+    
+    except Exception as e:
+        st.error(f"Failed to fetch historical weather data from CDS: {e}")
         return None
-
-@st.cache_data
-def get_current_weather_data(lat: float, lon: float):
-    """Fetch current weather data from Open-Meteo API."""
-    url = OPEN_METEO_URL.format(lat=lat, lon=lon)
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        data = response.json()
-        current = data.get("current_weather")
-        if current:
-            return {
-                "temperature": current.get("temperature"),
-                "windspeed": current.get("windspeed")
-            }
-    except requests.RequestException as e:
-        st.error(f"Failed to fetch current weather data: {e}")
-    return None
-
-@st.cache_data
-def get_altitude(lat: float, lon: float):
-    """Fetch altitude data from Open Elevation API."""
-    url = OPEN_ELEVATION_URL.format(lat=lat, lon=lon)
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        data = response.json()
-        results = data.get("results")
-        if results and isinstance(results, list):
-            return results[0].get("elevation")
-    except requests.RequestException as e:
-        st.error(f"Failed to retrieve altitude data: {e}")
-    return None
-
-def cryox_performance(cloud_cover, humidity, wind_speed, temperature, solar_angle, air_quality, uv_index):
-    """Calculate CryoX PDRC surface effectiveness."""
-    w_h, w_w, w_t, w_s, w_q, w_u = 0.35, 0.25, 0.15, 0.15, 0.10, 0.15
-    P_h = max(0, 1 - humidity / 100)
-    P_w = max(0, 1 - abs(wind_speed - 5) / 10)
-    P_t = min(1, temperature / 100)
-    P_s = min(1, solar_angle / 90)
-    P_q = air_quality
-    P_u = max(0, 1 - uv_index / 11)
-    performance = (1 - cloud_cover**1.5) * (
-        w_h * P_h + w_w * P_w + w_t * P_t + w_s * P_s + w_q * P_q + w_u * P_u
-    ) * 100
-    return max(0, performance)
 
 def is_daytime_calc(lat: float, lon: float):
     """Determine if it's currently daytime at the given coordinates."""
@@ -206,6 +187,20 @@ def is_daytime_calc(lat: float, lon: float):
         st.warning(f"Could not determine daytime status: {e}")
         return True
 
+def cryox_performance(cloud_cover, humidity, wind_speed, temperature, solar_angle, air_quality, uv_index):
+    """Calculate CryoX PDRC surface effectiveness."""
+    w_h, w_w, w_t, w_s, w_q, w_u = 0.35, 0.25, 0.15, 0.15, 0.10, 0.15
+    P_h = max(0, 1 - humidity / 100)
+    P_w = max(0, 1 - abs(wind_speed - 5) / 10)
+    P_t = min(1, temperature / 100)
+    P_s = min(1, solar_angle / 90)
+    P_q = air_quality
+    P_u = max(0, 1 - uv_index / 11)
+    performance = (1 - cloud_cover**1.5) * (
+        w_h * P_h + w_w * P_w + w_t * P_t + w_s * P_s + w_q * P_q + w_u * P_u
+    ) * 100
+    return max(0, performance)
+
 # Simple Calculation Mode
 def adjust_k_for_volume(base_k, actual_volume, standard_volume=2.0):
     """Adjust thermal transfer factor based on hive volume."""
@@ -216,7 +211,7 @@ def adjust_k_for_volume(base_k, actual_volume, standard_volume=2.0):
     return min(max(adjusted_k, 0.0), 1.0)
 
 def simple_calculation(lat, lon):
-    """Perform simple hive temperature calculation with temperature alerts."""
+    """Perform simple hive temperature calculation with temperature alerts using CDS data."""
     st.subheader("Simple Hive Temperature Calculation")
     start_date = st.date_input("Start Date", value=date(2023, 1, 1), help="Select start date for weather data.", key="simple_start_date")
     end_date = st.date_input("End Date", value=date(2023, 1, 31), help="Select end date for weather data.", key="simple_end_date")
@@ -227,7 +222,8 @@ def simple_calculation(lat, lon):
     IDEAL_TEMP_RANGE = (30.0, 36.0)  # Generic ideal range for stingless bees
 
     if st.button("Calculate", key="simple_calculate"):
-        weather_df = get_historical_weather_data(lat, lon, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
+        with st.spinner("Fetching historical weather data from CDS..."):
+            weather_df = get_historical_weather_data(lat, lon, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
         if weather_df is not None:
             try:
                 adjusted_k = adjust_k_for_volume(base_k, hive_volume)
@@ -235,7 +231,7 @@ def simple_calculation(lat, lon):
                 st.error(e)
                 return
             weather_df['internal_temperature'] = weather_df['temperature'] - adjusted_k * delta_T_roof
-            st.write("#### Weather Data and Calculated Internal Temperature")
+            st.write("#### Weather Data and Calculated Internal Temperature (Source: ERA5)")
             st.dataframe(weather_df.style.format({"temperature": "{:.2f}", "internal_temperature": "{:.2f}"}))
 
             st.write("#### Temperature Over Time")
@@ -382,12 +378,9 @@ def detailed_simulation(lat, lon):
 
     with st.expander("Advanced Hive Configuration"):
         boxes = create_hive_boxes(species)
-        altitude = get_altitude(lat, lon)
-        if altitude is None:
-            altitude = st.slider("Altitude (m)", 0, 5000, 100, key="detailed_altitude")
+        altitude = st.number_input("Altitude (m)", 0, 5000, 100, key="detailed_altitude")
         is_daytime = is_daytime_calc(lat, lon)
-        weather = get_current_weather_data(lat, lon)
-        ambient_temp = weather["temperature"] if weather else st.slider("Ambient Temperature (°C)", 15.0, 40.0, 28.0, key="detailed_ambient_temp")
+        ambient_temp = st.number_input("Ambient Temperature (°C)", 15.0, 40.0, 28.0, key="detailed_ambient_temp")
 
     environment_factors = {
         "cloud_cover": st.slider("Cloud Cover (%)", 0, 100, 50, key="detailed_cloud_cover") / 100,
@@ -493,6 +486,7 @@ def main():
     st.write("""
     *Note: This is a simplified model assuming a linear relationship between roof cooling, hive size, and internal temperature. 
     Actual hive temperatures may vary due to bee activity, insulation, and other environmental factors.*
+    Data source for Simple Calculation: Copernicus Climate Data Store (ERA5).
     """)
 
 if __name__ == "__main__":
