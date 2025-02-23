@@ -41,41 +41,27 @@ class HiveBox:
         return 0.0
 
 SPECIES_CONFIG = {
-    "Melipona": BeeSpecies(
-        name="Melipona", metabolic_rate=0.0088, colony_size_factor=700,
-        ideal_temp=(30.0, 33.0), humidity_range=(50.0, 70.0), nest_conductivity=0.09,
-        max_cooling=1.5, activity_profile="Diurnal"
-    ),
-    "Scaptotrigona": BeeSpecies(
-        name="Scaptotrigona", metabolic_rate=0.0105, colony_size_factor=1000,
-        ideal_temp=(31.0, 35.0), humidity_range=(40.0, 70.0), nest_conductivity=0.11,
-        max_cooling=1.8, activity_profile="Morning"
-    ),
-    "Trigona fulviventris": BeeSpecies(
-        name="Trigona fulviventris", metabolic_rate=0.0095, colony_size_factor=800,
-        ideal_temp=(32.0, 36.0), humidity_range=(45.0, 65.0), nest_conductivity=0.10,
-        max_cooling=1.6, activity_profile="Diurnal"
-    ),
-    "Cephalotrigona femorata": BeeSpecies(
-        name="Cephalotrigona femorata", metabolic_rate=0.0110, colony_size_factor=600,
-        ideal_temp=(29.0, 33.0), humidity_range=(50.0, 70.0), nest_conductivity=0.095,
-        max_cooling=1.55, activity_profile="Diurnal"
-    ),
-    "Melipona eburnea": BeeSpecies(
-        name="Melipona eburnea", metabolic_rate=0.0090, colony_size_factor=750,
-        ideal_temp=(30.5, 33.5), humidity_range=(50.0, 70.0), nest_conductivity=0.085,
-        max_cooling=1.6, activity_profile="Diurnal"
-    ),
-    "Melipona compressipes": BeeSpecies(
-        name="Melipona compressipes", metabolic_rate=0.0100, colony_size_factor=800,
-        ideal_temp=(31.0, 34.0), humidity_range=(50.0, 68.0), nest_conductivity=0.088,
-        max_cooling=1.7, activity_profile="Diurnal"
-    ),
-    "Trigona spinipes": BeeSpecies(
-        name="Trigona spinipes", metabolic_rate=0.0092, colony_size_factor=850,
-        ideal_temp=(31.0, 35.0), humidity_range=(45.0, 65.0), nest_conductivity=0.095,
-        max_cooling=1.65, activity_profile="Diurnal"
-    )
+    "Melipona": BeeSpecies(name="Melipona", metabolic_rate=0.0088, colony_size_factor=700,
+                          ideal_temp=(30.0, 33.0), humidity_range=(50.0, 70.0), nest_conductivity=0.09,
+                          max_cooling=1.5, activity_profile="Diurnal"),
+    "Scaptotrigona": BeeSpecies(name="Scaptotrigona", metabolic_rate=0.0105, colony_size_factor=1000,
+                               ideal_temp=(31.0, 35.0), humidity_range=(40.0, 70.0), nest_conductivity=0.11,
+                               max_cooling=1.8, activity_profile="Morning"),
+    "Trigona fulviventris": BeeSpecies(name="Trigona fulviventris", metabolic_rate=0.0095, colony_size_factor=800,
+                                     ideal_temp=(32.0, 36.0), humidity_range=(45.0, 65.0), nest_conductivity=0.10,
+                                     max_cooling=1.6, activity_profile="Diurnal"),
+    "Cephalotrigona femorata": BeeSpecies(name="Cephalotrigona femorata", metabolic_rate=0.0110, colony_size_factor=600,
+                                        ideal_temp=(29.0, 33.0), humidity_range=(50.0, 70.0), nest_conductivity=0.095,
+                                        max_cooling=1.55, activity_profile="Diurnal"),
+    "Melipona eburnea": BeeSpecies(name="Melipona eburnea", metabolic_rate=0.0090, colony_size_factor=750,
+                                 ideal_temp=(30.5, 33.5), humidity_range=(50.0, 70.0), nest_conductivity=0.085,
+                                 max_cooling=1.6, activity_profile="Diurnal"),
+    "Melipona compressipes": BeeSpecies(name="Melipona compressipes", metabolic_rate=0.0100, colony_size_factor=800,
+                                      ideal_temp=(31.0, 34.0), humidity_range=(50.0, 68.0), nest_conductivity=0.088,
+                                      max_cooling=1.7, activity_profile="Diurnal"),
+    "Trigona spinipes": BeeSpecies(name="Trigona spinipes", metabolic_rate=0.0092, colony_size_factor=850,
+                                 ideal_temp=(31.0, 35.0), humidity_range=(45.0, 65.0), nest_conductivity=0.095,
+                                 max_cooling=1.65, activity_profile="Diurnal")
 }
 
 def parse_gps_input(gps_str: str) -> Tuple[float, float] | None:
@@ -89,7 +75,11 @@ def parse_gps_input(gps_str: str) -> Tuple[float, float] | None:
 def get_historical_weather_data(lat: float, lon: float, start_date: str, end_date: str):
     """Fetch historical hourly temperature data from Copernicus CDS API (ERA5)."""
     try:
-        c = cdsapi.Client(url="https://cds.climate.copernicus.eu/api/v2", key=st.secrets["CDS_API_KEY"])
+        # Use .cdsapirc locally; fallback to st.secrets for Streamlit Cloud
+        if 'CDS_API_KEY' in st.secrets:
+            c = cdsapi.Client(url="https://cds.climate.copernicus.eu/api/v2", key=st.secrets["CDS_API_KEY"])
+        else:
+            c = cdsapi.Client()  # Assumes .cdsapirc is configured locally
         
         request = {
             'product_type': 'reanalysis',
