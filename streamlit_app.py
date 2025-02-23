@@ -13,7 +13,6 @@ import io
 import os
 import cdsapi
 
-# Data classes
 @dataclass
 class BeeSpecies:
     name: str
@@ -35,90 +34,51 @@ class HiveBox:
     pdrc_coating: bool = False
 
     def adjusted_cooling(self, environment_factors):
-        """Compute hive cooling effectiveness with CryoX coating on the 4th box only."""
-        base_cooling = 5.0  # Default max cooling effect when CryoX is applied
-        if self.pdrc_coating and self.id == 4:  # Only the 4th box can have CryoX cooling
+        base_cooling = 5.0
+        if self.pdrc_coating and self.id == 4:
             pdrc_performance = cryox_performance(**environment_factors) / 100
             return base_cooling * pdrc_performance
-        return 0.0  # No cooling without CryoX or for boxes 1–3
+        return 0.0
 
-# Configuration constants
 SPECIES_CONFIG = {
     "Melipona": BeeSpecies(
-        name="Melipona",
-        metabolic_rate=0.0088,
-        colony_size_factor=700,
-        ideal_temp=(30.0, 33.0),
-        humidity_range=(50.0, 70.0),
-        nest_conductivity=0.09,
-        max_cooling=1.5,
-        activity_profile="Diurnal"
+        name="Melipona", metabolic_rate=0.0088, colony_size_factor=700,
+        ideal_temp=(30.0, 33.0), humidity_range=(50.0, 70.0), nest_conductivity=0.09,
+        max_cooling=1.5, activity_profile="Diurnal"
     ),
     "Scaptotrigona": BeeSpecies(
-        name="Scaptotrigona",
-        metabolic_rate=0.0105,
-        colony_size_factor=1000,
-        ideal_temp=(31.0, 35.0),
-        humidity_range=(40.0, 70.0),
-        nest_conductivity=0.11,
-        max_cooling=1.8,
-        activity_profile="Morning"
+        name="Scaptotrigona", metabolic_rate=0.0105, colony_size_factor=1000,
+        ideal_temp=(31.0, 35.0), humidity_range=(40.0, 70.0), nest_conductivity=0.11,
+        max_cooling=1.8, activity_profile="Morning"
     ),
     "Trigona fulviventris": BeeSpecies(
-        name="Trigona fulviventris",
-        metabolic_rate=0.0095,
-        colony_size_factor=800,
-        ideal_temp=(32.0, 36.0),
-        humidity_range=(45.0, 65.0),
-        nest_conductivity=0.10,
-        max_cooling=1.6,
-        activity_profile="Diurnal"
+        name="Trigona fulviventris", metabolic_rate=0.0095, colony_size_factor=800,
+        ideal_temp=(32.0, 36.0), humidity_range=(45.0, 65.0), nest_conductivity=0.10,
+        max_cooling=1.6, activity_profile="Diurnal"
     ),
     "Cephalotrigona femorata": BeeSpecies(
-        name="Cephalotrigona femorata",
-        metabolic_rate=0.0110,
-        colony_size_factor=600,
-        ideal_temp=(29.0, 33.0),
-        humidity_range=(50.0, 70.0),
-        nest_conductivity=0.095,
-        max_cooling=1.55,
-        activity_profile="Diurnal"
+        name="Cephalotrigona femorata", metabolic_rate=0.0110, colony_size_factor=600,
+        ideal_temp=(29.0, 33.0), humidity_range=(50.0, 70.0), nest_conductivity=0.095,
+        max_cooling=1.55, activity_profile="Diurnal"
     ),
     "Melipona eburnea": BeeSpecies(
-        name="Melipona eburnea",
-        metabolic_rate=0.0090,
-        colony_size_factor=750,
-        ideal_temp=(30.5, 33.5),
-        humidity_range=(50.0, 70.0),
-        nest_conductivity=0.085,
-        max_cooling=1.6,
-        activity_profile="Diurnal"
+        name="Melipona eburnea", metabolic_rate=0.0090, colony_size_factor=750,
+        ideal_temp=(30.5, 33.5), humidity_range=(50.0, 70.0), nest_conductivity=0.085,
+        max_cooling=1.6, activity_profile="Diurnal"
     ),
     "Melipona compressipes": BeeSpecies(
-        name="Melipona compressipes",
-        metabolic_rate=0.0100,
-        colony_size_factor=800,
-        ideal_temp=(31.0, 34.0),
-        humidity_range=(50.0, 68.0),
-        nest_conductivity=0.088,
-        max_cooling=1.7,
-        activity_profile="Diurnal"
+        name="Melipona compressipes", metabolic_rate=0.0100, colony_size_factor=800,
+        ideal_temp=(31.0, 34.0), humidity_range=(50.0, 68.0), nest_conductivity=0.088,
+        max_cooling=1.7, activity_profile="Diurnal"
     ),
     "Trigona spinipes": BeeSpecies(
-        name="Trigona spinipes",
-        metabolic_rate=0.0092,
-        colony_size_factor=850,
-        ideal_temp=(31.0, 35.0),
-        humidity_range=(45.0, 65.0),
-        nest_conductivity=0.095,
-        max_cooling=1.65,
-        activity_profile="Diurnal"
+        name="Trigona spinipes", metabolic_rate=0.0092, colony_size_factor=850,
+        ideal_temp=(31.0, 35.0), humidity_range=(45.0, 65.0), nest_conductivity=0.095,
+        max_cooling=1.65, activity_profile="Diurnal"
     )
 }
 
-# Utility functions
 def parse_gps_input(gps_str: str) -> Tuple[float, float] | None:
-    """Parse GPS coordinates from string input."""
     try:
         lat, lon = map(float, gps_str.strip().split(','))
         return lat, lon
@@ -131,7 +91,6 @@ def get_historical_weather_data(lat: float, lon: float, start_date: str, end_dat
     try:
         c = cdsapi.Client(url="https://cds.climate.copernicus.eu/api/v2", key=st.secrets["CDS_API_KEY"])
         
-        # Minimal request for testing
         request = {
             'product_type': 'reanalysis',
             'format': 'netcdf',
@@ -158,12 +117,11 @@ def get_historical_weather_data(lat: float, lon: float, start_date: str, end_dat
         return None
 
 def is_daytime_calc(lat: float, lon: float):
-    """Determine if it's currently daytime at the given coordinates."""
     try:
         tf = TimezoneFinder()
         timezone_str = tf.timezone_at(lat=lat, lng=lon)
         if not timezone_str:
-            return True  # Default to daytime
+            return True
         timezone = pytz.timezone(timezone_str)
         current_time = datetime.now(timezone)
         return 6 <= current_time.hour < 18
@@ -172,7 +130,6 @@ def is_daytime_calc(lat: float, lon: float):
         return True
 
 def cryox_performance(cloud_cover, humidity, wind_speed, temperature, solar_angle, air_quality, uv_index):
-    """Calculate CryoX PDRC surface effectiveness."""
     w_h, w_w, w_t, w_s, w_q, w_u = 0.35, 0.25, 0.15, 0.15, 0.10, 0.15
     P_h = max(0, 1 - humidity / 100)
     P_w = max(0, 1 - abs(wind_speed - 5) / 10)
@@ -185,9 +142,7 @@ def cryox_performance(cloud_cover, humidity, wind_speed, temperature, solar_angl
     ) * 100
     return max(0, performance)
 
-# Simple Calculation Mode
 def adjust_k_for_volume(base_k, actual_volume, standard_volume=2.0):
-    """Adjust thermal transfer factor based on hive volume."""
     if actual_volume <= 0:
         raise ValueError("Hive volume must be greater than zero.")
     scaling_factor = standard_volume / actual_volume
@@ -195,7 +150,6 @@ def adjust_k_for_volume(base_k, actual_volume, standard_volume=2.0):
     return min(max(adjusted_k, 0.0), 1.0)
 
 def simple_calculation(lat, lon):
-    """Perform simple hive temperature calculation with temperature alerts using CDS data."""
     st.subheader("Simple Hive Temperature Calculation")
     start_date = st.date_input("Start Date", value=date(2023, 1, 1), help="Select start date for weather data.", key="simple_start_date")
     end_date = st.date_input("End Date", value=date(2023, 1, 31), help="Select end date for weather data.", key="simple_end_date")
@@ -203,7 +157,7 @@ def simple_calculation(lat, lon):
     delta_T_roof = st.slider("Roof Temperature Reduction (°C)", 0.0, 10.0, 8.5, step=0.5, help="Cooling from hive roof.", key="simple_delta_T_roof")
     hive_volume = st.number_input("Hive Internal Volume (liters)", 0.5, 5.0, 2.0, step=0.1, help="Hive volume in liters.", key="simple_hive_volume")
 
-    IDEAL_TEMP_RANGE = (30.0, 36.0)  # Generic ideal range for stingless bees
+    IDEAL_TEMP_RANGE = (30.0, 36.0)
 
     if st.button("Calculate", key="simple_calculate"):
         with st.spinner("Fetching historical weather data from CDS..."):
@@ -247,9 +201,7 @@ def simple_calculation(lat, lon):
         else:
             st.write("No data available. Please check your inputs and try again.")
 
-# Detailed Simulation Mode
 def create_hive_boxes(species):
-    """Create and configure 4 hive boxes with UI controls, CryoX only on the 4th box."""
     default_boxes = [
         HiveBox(1, 13, 5, 13),
         HiveBox(2, 13, 5, 13),
@@ -272,11 +224,10 @@ def create_hive_boxes(species):
     return boxes
 
 def simulate_hive_temperature(species, colony_size_pct, nest_thickness, lid_thickness, boxes, ambient_temp, is_daytime, altitude, rain_intensity, surface_area_exponent, lat, lon, day_of_year, **env_factors):
-    """Simulate hive internal temperature with CryoX cooling on the 4th box."""
     colony_size = species.colony_size_factor * (colony_size_pct / 100)
     metabolic_heat = species.metabolic_rate * colony_size * (1.2 if is_daytime else 0.8)
-    total_volume = sum(box.width * box.height * box.depth for box in boxes) / 1000  # Convert cm³ to liters
-    surface_area = sum(2 * (box.width * box.height + box.width * box.depth + box.height * box.depth) for box in boxes) / 10000  # Convert cm² to m²
+    total_volume = sum(box.width * box.height * box.depth for box in boxes) / 1000
+    surface_area = sum(2 * (box.width * box.height + box.width * box.depth + box.height * box.depth) for box in boxes) / 10000
     adjusted_surface_area = surface_area ** surface_area_exponent
     heat_loss = species.nest_conductivity * adjusted_surface_area * (ambient_temp - species.ideal_temp[0]) / (nest_thickness / 1000)
     cooling = sum(box.adjusted_cooling(env_factors) for box in boxes) * (1 - rain_intensity * 0.5)
@@ -289,7 +240,6 @@ def simulate_hive_temperature(species, colony_size_pct, nest_thickness, lid_thic
     return {"base_temp": base_temp, "box_temps": box_temps}
 
 def plot_box_temperatures(boxes: List[HiveBox], box_temps: List[float], species: BeeSpecies):
-    """Plot temperature per hive box."""
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=[f"Box {box.id}" for box in boxes],
@@ -308,10 +258,8 @@ def plot_box_temperatures(boxes: List[HiveBox], box_temps: List[float], species:
     return fig
 
 def plot_hive_3d_structure(boxes: List[HiveBox], box_temps: List[float], species: BeeSpecies):
-    """Plot 3D hive structure with temperature coloring using filled boxes."""
     fig = go.Figure()
     z_offset = 0
-
     for i, (box, temp) in enumerate(zip(boxes, box_temps)):
         x = [0, box.width, box.width, 0, 0, box.width, box.width, 0]
         y = [0, 0, box.depth, box.depth, 0, 0, box.depth, box.depth]
@@ -319,28 +267,16 @@ def plot_hive_3d_structure(boxes: List[HiveBox], box_temps: List[float], species
         i_faces = [0, 0, 4, 4, 0, 1, 5, 2, 6, 3, 7, 4]
         j_faces = [1, 4, 5, 0, 3, 2, 6, 3, 7, 7, 6, 5]
         k_faces = [4, 5, 1, 1, 7, 5, 2, 6, 3, 2, 5, 6]
-
         fig.add_trace(go.Mesh3d(
-            x=x,
-            y=y,
-            z=z,
-            i=i_faces,
-            j=j_faces,
-            k=k_faces,
-            intensity=[temp] * 8,
-            colorscale='Viridis',
-            colorbar_title="Temperature (°C)",
-            name=f"Box {box.id}",
-            opacity=0.8
+            x=x, y=y, z=z, i=i_faces, j=j_faces, k=k_faces,
+            intensity=[temp] * 8, colorscale='Viridis', colorbar_title="Temperature (°C)",
+            name=f"Box {box.id}", opacity=0.8
         ))
         z_offset += box.height
-
     fig.update_layout(
         title="3D Hive Structure with Temperature Gradient",
         scene=dict(
-            xaxis_title="Width (cm)",
-            yaxis_title="Depth (cm)",
-            zaxis_title="Height (cm)",
+            xaxis_title="Width (cm)", yaxis_title="Depth (cm)", zaxis_title="Height (cm)",
             camera=dict(eye=dict(x=1.5, y=1.5, z=1.5))
         ),
         showlegend=True
@@ -348,7 +284,6 @@ def plot_hive_3d_structure(boxes: List[HiveBox], box_temps: List[float], species
     return fig
 
 def detailed_simulation(lat, lon):
-    """Perform detailed hive thermal simulation with enhancements."""
     st.subheader("Detailed Hive Thermal Simulation")
     st.write("Configure the hive and environment to simulate temperatures. CryoX coating on Box 4 (top) can reduce temperatures up to 5°C based on conditions.")
     
@@ -378,20 +313,11 @@ def detailed_simulation(lat, lon):
 
     if st.button("Run Simulation", key="detailed_run_simulation"):
         results = simulate_hive_temperature(
-            species=species,
-            colony_size_pct=colony_size_pct,
-            nest_thickness=nest_thickness,
-            lid_thickness=lid_thickness,
-            boxes=boxes,
-            ambient_temp=ambient_temp,
-            is_daytime=is_daytime,
-            altitude=altitude,
-            rain_intensity=rain_intensity,
-            surface_area_exponent=surface_area_exponent,
-            lat=lat,
-            lon=lon,
-            day_of_year=datetime.now().timetuple().tm_yday,
-            **environment_factors
+            species=species, colony_size_pct=colony_size_pct, nest_thickness=nest_thickness,
+            lid_thickness=lid_thickness, boxes=boxes, ambient_temp=ambient_temp,
+            is_daytime=is_daytime, altitude=altitude, rain_intensity=rain_intensity,
+            surface_area_exponent=surface_area_exponent, lat=lat, lon=lon,
+            day_of_year=datetime.now().timetuple().tm_yday, **environment_factors
         )
         st.session_state.last_results = results
         st.session_state.last_boxes = boxes
@@ -402,7 +328,6 @@ def detailed_simulation(lat, lon):
         st.subheader("Simulation Results")
         st.metric("Base Hive Temperature", f"{results['base_temp']:.1f} °C")
 
-        # Temperature alert
         if results['base_temp'] < species.ideal_temp[0]:
             st.error(f"⚠️ Hive is too cold! Base temperature ({results['base_temp']:.1f}°C) is below the ideal range ({species.ideal_temp[0]}–{species.ideal_temp[1]}°C) for {species.name}.")
         elif results['base_temp'] > species.ideal_temp[1]:
@@ -410,19 +335,16 @@ def detailed_simulation(lat, lon):
         else:
             st.success(f"✅ Hive temperature ({results['base_temp']:.1f}°C) is within the ideal range ({species.ideal_temp[0]}–{species.ideal_temp[1]}°C) for {species.name}.")
 
-        # Temperature Gradient Analysis
         st.write("#### Temperature Gradient Across Boxes")
         box_temps = results["box_temps"]
-        temp_diff = box_temps[0] - box_temps[3]  # Difference between bottom (Box 1) and top (Box 4)
+        temp_diff = box_temps[0] - box_temps[3]
         st.write(f"**Temperature Difference (Box 1 to Box 4):** {temp_diff:.2f} °C")
         if boxes[3].pdrc_coating:
             st.info(f"CryoX cooling on Box 4 reduced the top temperature by up to {boxes[3].adjusted_cooling(environment_factors):.2f}°C.")
 
-        # Visualizations
         st.plotly_chart(plot_box_temperatures(boxes, box_temps, species), use_container_width=True)
         st.plotly_chart(plot_hive_3d_structure(boxes, box_temps, species), use_container_width=True)
 
-        # Export Results
         st.write("#### Export Results")
         df_export = pd.DataFrame({
             "Box": [f"Box {box.id}" for box in boxes],
@@ -438,7 +360,6 @@ def detailed_simulation(lat, lon):
             mime="text/csv"
         )
 
-        # User Guidance
         st.write("#### Tips for Hive Optimization")
         st.markdown("""
         - **CryoX Effect**: Enabling CryoX on Box 4 (roof) can lower temperatures, especially in hot climates. Adjust box dimensions to maximize volume if more cooling is needed.
@@ -448,12 +369,8 @@ def detailed_simulation(lat, lon):
     else:
         st.write("Please run the simulation to see results.")
 
-# Main function
 def main():
-    """Main entry point for the Streamlit app."""
-    # Must be the first Streamlit command
     st.set_page_config(page_title="Hive Thermal Simulator", layout="wide")
-    
     st.title("Hive Thermal Simulator")
     st.sidebar.header("Location")
     gps_input = st.sidebar.text_input("Enter GPS Coordinates (lat,lon)", "-3.4653,-62.2159")
