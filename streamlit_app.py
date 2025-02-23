@@ -130,15 +130,25 @@ def get_historical_weather_data(lat: float, lon: float, start_date: str, end_dat
     """Fetch historical hourly temperature data from Copernicus CDS API (ERA5)."""
     try:
         c = cdsapi.Client(url="https://cds.climate.copernicus.eu/api/v2", key=st.secrets["CDS_API_KEY"])
-
+        
         # Parse start and end dates
         start = datetime.strptime(start_date, "%Y-%m-%d")
         end = datetime.strptime(end_date, "%Y-%m-%d")
         
         # Generate specific date range
         years = [str(y) for y in range(start.year, end.year + 1)]
-        months = [f"{m:02d}" for m in range(start.month, end.month + 1) if start.year == end.year else range(1, 13)]
-        days = [f"{d:02d}" for d in range(start.day, end.day + 1) if start.month == end.month else range(1, 32)]
+        
+        # Set months based on whether start and end years are the same
+        if start.year == end.year:
+            months = [f"{m:02d}" for m in range(start.month, end.month + 1)]
+        else:
+            months = [f"{m:02d}" for m in range(1, 13)]
+        
+        # Set days based on whether start and end months are the same within the same year
+        if start.year == end.year and start.month == end.month:
+            days = [f"{d:02d}" for d in range(start.day, end.day + 1)]
+        else:
+            days = [f"{d:02d}" for d in range(1, 32)]
 
         request = {
             'product_type': 'reanalysis',
@@ -147,7 +157,7 @@ def get_historical_weather_data(lat: float, lon: float, start_date: str, end_dat
             'year': years,
             'month': months,
             'day': days,
-            'time': ['00:00', '06:00', '12:00', '18:00'],  # Limit to fewer time points for testing
+            'time': ['00:00', '06:00', '12:00', '18:00'],
             'area': [lat + 0.1, lon - 0.1, lat - 0.1, lon + 0.1],  # [north, west, south, east]
         }
 
