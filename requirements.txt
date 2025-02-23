@@ -1,5 +1,5 @@
 streamlit
-cdsapi
+cdsapi>=0.7.0  # Use latest version as of Feb 2025
 xarray
 pandas
 matplotlib
