@@ -13,16 +13,6 @@ import io
 import os
 import cdsapi
 
-st.write("CDS client initialized successfully!")
-
-# Get the API key from secrets
-api_key = st.secrets["CDS_API_KEY"]
-
-# Initialize the CDS client
-client = cdsapi.Client(url="https://cds.climate.copernicus.eu/api/v2", key=api_key)
-
-
-
 # Data classes
 @dataclass
 class BeeSpecies:
@@ -140,7 +130,7 @@ def get_historical_weather_data(lat: float, lon: float, start_date: str, end_dat
     """Fetch historical hourly temperature data from Copernicus CDS API (ERA5)."""
     try:
         # Initialize CDS API client with API key from secrets
-        c = cdsapi.Client(url="https://cds.climate.copernicus.eu/api/v2", key=st.secrets["f8215982-a97c-4803-b0a1-10772c3e6c69"])
+        c = cdsapi.Client(url="https://cds.climate.copernicus.eu/api/v2", key=st.secrets["CDS_API_KEY"])
 
         # Define the request parameters for ERA5 hourly data
         request = {
@@ -477,7 +467,9 @@ def detailed_simulation(lat, lon):
 # Main function
 def main():
     """Main entry point for the Streamlit app."""
+    # Must be the first Streamlit command
     st.set_page_config(page_title="Hive Thermal Simulator", layout="wide")
+    
     st.title("Hive Thermal Simulator")
     st.sidebar.header("Location")
     gps_input = st.sidebar.text_input("Enter GPS Coordinates (lat,lon)", "-3.4653,-62.2159")
