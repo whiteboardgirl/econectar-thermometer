@@ -1,5 +1,4 @@
 import streamlit as st
-import cdsapi
 import xarray as xr
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -12,6 +11,10 @@ from dataclasses import dataclass
 from typing import List, Tuple, Dict
 import io
 import os
+import cdsapi
+
+api_key = st.secrets["f8215982-a97c-4803-b0a1-10772c3e6c69"]
+client = cdsapi.Client(url="https://cds.climate.copernicus.eu/api/v2", key=api_key)
 
 # Data classes
 @dataclass
