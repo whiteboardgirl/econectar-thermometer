@@ -13,8 +13,15 @@ import io
 import os
 import cdsapi
 
+st.write("CDS client initialized successfully!")
+
+# Get the API key from secrets
 api_key = st.secrets["f8215982-a97c-4803-b0a1-10772c3e6c69"]
+
+# Initialize the CDS client
 client = cdsapi.Client(url="https://cds.climate.copernicus.eu/api/v2", key=api_key)
+
+
 
 # Data classes
 @dataclass
