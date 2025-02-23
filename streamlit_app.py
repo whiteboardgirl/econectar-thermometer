@@ -129,45 +129,38 @@ def parse_gps_input(gps_str: str) -> Tuple[float, float] | None:
 def get_historical_weather_data(lat: float, lon: float, start_date: str, end_date: str):
     """Fetch historical hourly temperature data from Copernicus CDS API (ERA5)."""
     try:
-        # Initialize CDS API client with API key from secrets
         c = cdsapi.Client(url="https://cds.climate.copernicus.eu/api/v2", key=st.secrets["CDS_API_KEY"])
 
-        # Define the request parameters for ERA5 hourly data
+        # Parse start and end dates
+        start = datetime.strptime(start_date, "%Y-%m-%d")
+        end = datetime.strptime(end_date, "%Y-%m-%d")
+        
+        # Generate specific date range
+        years = [str(y) for y in range(start.year, end.year + 1)]
+        months = [f"{m:02d}" for m in range(start.month, end.month + 1) if start.year == end.year else range(1, 13)]
+        days = [f"{d:02d}" for d in range(start.day, end.day + 1) if start.month == end.month else range(1, 32)]
+
         request = {
             'product_type': 'reanalysis',
             'format': 'netcdf',
-            'variable': '2m_temperature',  # Temperature at 2m height
-            'year': [str(year) for year in range(int(start_date[:4]), int(end_date[:4]) + 1)],
-            'month': [f'{month:02d}' for month in range(1, 13)],
-            'day': [f'{day:02d}' for day in range(1, 32)],
-            'time': [f'{hour:02d}:00' for hour in range(0, 24)],
-            'area': [lat + 0.1, lon - 0.1, lat - 0.1, lon + 0.1],  # Small bounding box around lat/lon
+            'variable': '2m_temperature',
+            'year': years,
+            'month': months,
+            'day': days,
+            'time': ['00:00', '06:00', '12:00', '18:00'],  # Limit to fewer time points for testing
+            'area': [lat + 0.1, lon - 0.1, lat - 0.1, lon + 0.1],  # [north, west, south, east]
         }
 
-        # Temporary file to store the downloaded NetCDF
         output_file = f"era5_temp_{lat}_{lon}_{start_date}_{end_date}.nc"
-        
-        # Download data if not already cached
         if not os.path.exists(output_file):
             c.retrieve('reanalysis-era5-single-levels', request, output_file)
 
-        # Load the NetCDF file using xarray
         ds = xr.open_dataset(output_file)
-        
-        # Extract temperature (convert from Kelvin to Celsius)
         temp = ds['t2m'].sel(latitude=lat, longitude=lon, method='nearest') - 273.15
-        
-        # Convert to pandas DataFrame
         df = temp.to_dataframe(name='temperature').reset_index()
         df['time'] = pd.to_datetime(df['time'])
-        
-        # Filter by date range
         df = df[(df['time'] >= start_date) & (df['time'] <= end_date)]
-        
-        # Clean up unnecessary columns
-        df = df[['time', 'temperature']]
-        
-        return df
+        return df[['time', 'temperature']]
     
     except Exception as e:
         st.error(f"Failed to fetch historical weather data from CDS: {e}")
