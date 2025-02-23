@@ -130,7 +130,7 @@ def get_historical_weather_data(lat: float, lon: float, start_date: str, end_dat
     """Fetch historical hourly temperature data from Copernicus CDS API (ERA5)."""
     try:
         # Initialize CDS API client with API key from secrets
-        c = cdsapi.Client(url="https://cds.climate.copernicus.eu/api/v2", key=st.secrets["CDS_API_KEY"])
+        c = cdsapi.Client(url="https://cds.climate.copernicus.eu/api/v2", key=st.secrets["f8215982-a97c-4803-b0a1-10772c3e6c69"])
 
         # Define the request parameters for ERA5 hourly data
         request = {
